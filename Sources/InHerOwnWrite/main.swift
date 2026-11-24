@@ -1,0 +1,3 @@
+import WriteApp
+
+InHerOwnWriteApp.main()

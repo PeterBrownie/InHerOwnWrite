@@ -1,0 +1,19 @@
+.build/
+.swiftpm/
+.DS_Store
+
+# Never commit journal content, even if it is copied into this folder.
+data/
+*.sqlite
+*.sqlite-*
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.heif
+*.tif
+*.tiff
+*.webp
+
+# The earlier browser-based version lives here locally but isn't part of this app or its updates.
+JournalOCR/
