@@ -221,6 +221,17 @@ Not started. Listed so they aren't forgotten.
   `--image-min-tokens 8 --image-max-tokens 32`; not looked into), try it on real handwriting, and weigh
   the 7.4 GB download and about 5 GB of memory against 2.7 GB.
 
+- **Try the spell checker's guesses on real pages.** They pass the offline checks and leave the invented
+  page's reading unchanged, but haven't been measured with the model on real handwriting, where words with a
+  missing or extra letter actually occur.
+- **Try the ink tint on joined-up cursive.** It was checked on neat printing and on messy unruled writing;
+  cursive word boxes may be looser.
+- **Scroll the photo to an outlined word.** When the photo pane is zoomed in, clicking a marked word outlines
+  it but doesn't scroll it into view.
+
 ## Known issues
 
-None open.
+- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame, removing
+  and restoring words in the reading window, Resume on This Mac after quitting, the word outline, and the ink
+  tint. They pass `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked
+  with the real model (`--local`), but none has been used in the app itself yet.
