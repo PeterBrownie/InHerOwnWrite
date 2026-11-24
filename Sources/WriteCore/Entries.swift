@@ -26,11 +26,14 @@ public struct PageStructure: Codable, Hashable, Sendable {
     public var markers: [EntryMarker]
     public var names: [String]
     public var textDigest: String
+    /// Words a reading on this Mac changed or wasn't sure of. Missing on other readings.
+    public var wordNotes: [WordNote]?
 
-    public init(markers: [EntryMarker], names: [String], text: String) {
+    public init(markers: [EntryMarker], names: [String], text: String, wordNotes: [WordNote]? = nil) {
         self.markers = markers
         self.names = names
         textDigest = Self.digest(text)
+        self.wordNotes = wordNotes
     }
 
     func describes(_ text: String) -> Bool {
@@ -314,30 +317,107 @@ public enum EntryBuilder {
 public enum LineFlow {
     /// Joins handwritten line wraps into paragraphs, keeping blank lines and date headings.
     public static func reflow(_ text: String, headingLines: Set<Int> = []) -> String {
-        var paragraphs: [String] = []
-        var current = ""
+        mapped(text, headingLines: headingLines).text
+    }
 
-        func finish() {
-            if !current.isEmpty { paragraphs.append(current) }
-            current = ""
+    /// Flowing text that remembers where each of its characters came from, so an edit made to it can be
+    /// made to the text as written, keeping her line breaks.
+    public struct Flowed: Sendable {
+        public let text: String
+        /// For each UTF-16 unit of `text`, its offset in the written text, or -1 for a joining space or a
+        /// paragraph break the flow added.
+        let sources: [Int]
+
+        /// The written text's range for a range of the flowing text, for replacing it.
+        public func writtenRange(for range: NSRange) -> NSRange {
+            let start: Int
+            if range.location < sources.count, sources[range.location] >= 0 {
+                start = sources[range.location]
+            } else {
+                // At a joining space: the end of the line before it.
+                start = (sources[..<min(range.location, sources.count)].last { $0 >= 0 }).map { $0 + 1 } ?? 0
+            }
+            let end = sources[range.location..<min(NSMaxRange(range), sources.count)].filter { $0 >= 0 }.max().map { $0 + 1 }
+            return NSRange(location: start, length: max((end ?? start) - start, 0))
         }
 
-        for (index, raw) in EntryBuilder.lines(of: text).enumerated() {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty {
+        /// Where a range of the written text appears in the flowing text, if all of it does.
+        public func flowedRange(for written: NSRange) -> NSRange? {
+            guard written.length > 0,
+                  let first = sources.firstIndex(of: written.location),
+                  let last = sources.firstIndex(of: NSMaxRange(written) - 1), last >= first
+            else { return nil }
+            return NSRange(location: first, length: last - first + 1)
+        }
+
+        /// The written text after an edit to the flowing text, which changed it from `text` to `edited`.
+        public func applying(_ edited: String, to written: String) -> String {
+            let old = text as NSString, new = edited as NSString
+            var prefix = 0
+            while prefix < old.length, prefix < new.length, old.character(at: prefix) == new.character(at: prefix) { prefix += 1 }
+            var suffix = 0
+            while suffix < old.length - prefix, suffix < new.length - prefix,
+                  old.character(at: old.length - 1 - suffix) == new.character(at: new.length - 1 - suffix) { suffix += 1 }
+            let replaced = NSRange(location: prefix, length: old.length - prefix - suffix)
+            let inserted = new.substring(with: NSRange(location: prefix, length: new.length - prefix - suffix))
+            return (written as NSString).replacingCharacters(in: writtenRange(for: replaced), with: inserted)
+        }
+    }
+
+    public static func mapped(_ text: String, headingLines: Set<Int> = []) -> Flowed {
+        let written = text as NSString
+        var paragraphs: [(units: [unichar], sources: [Int])] = []
+        var current: (units: [unichar], sources: [Int]) = ([], [])
+
+        func finish() {
+            if !current.units.isEmpty { paragraphs.append(current) }
+            current = ([], [])
+        }
+
+        var lineStart = 0
+        var index = 0
+        while lineStart <= written.length {
+            let rest = NSRange(location: lineStart, length: written.length - lineStart)
+            let newline = written.range(of: "\n", options: [], range: rest)
+            let lineEnd = newline.location == NSNotFound ? written.length : newline.location
+            // The line without surrounding spaces, tabs, or a carriage return.
+            var first = lineStart, last = lineEnd
+            func isBlank(_ unit: unichar) -> Bool { unit == 32 || unit == 9 || unit == 13 }
+            while first < last, isBlank(written.character(at: first)) { first += 1 }
+            while last > first, isBlank(written.character(at: last - 1)) { last -= 1 }
+            let units = (first..<last).map { written.character(at: $0) }
+            let sources = Array(first..<last)
+
+            if units.isEmpty {
                 finish()
             } else if headingLines.contains(index) {
                 finish()
-                paragraphs.append(line)
-            } else if current.isEmpty {
-                current = line
-            } else if current.hasSuffix("-"), !current.hasSuffix(" -") {
-                current += line
+                paragraphs.append((units, sources))
+            } else if current.units.isEmpty {
+                current = (units, sources)
+            } else if current.units.last == 45, !(current.units.count >= 2 && current.units[current.units.count - 2] == 32) {
+                // A word hyphenated across lines joins without a space.
+                current.units += units
+                current.sources += sources
             } else {
-                current += " " + line
+                current.units += [32] + units
+                current.sources += [-1] + sources
             }
+            index += 1
+            if newline.location == NSNotFound { break }
+            lineStart = lineEnd + 1
         }
         finish()
-        return paragraphs.joined(separator: "\n\n")
+
+        var units: [unichar] = [], sources: [Int] = []
+        for (number, paragraph) in paragraphs.enumerated() {
+            if number > 0 {
+                units += [10, 10]
+                sources += [-1, -1]
+            }
+            units += paragraph.units
+            sources += paragraph.sources
+        }
+        return Flowed(text: String(utf16CodeUnits: units, count: units.count), sources: sources)
     }
 }

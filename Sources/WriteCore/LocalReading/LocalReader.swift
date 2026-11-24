@@ -63,6 +63,31 @@ public enum LocalReadEvent: Sendable {
     case finished(String)
 }
 
+/// A finished local reading: the text, and notes on the words worth a second look.
+public struct LocalReadResult: Sendable, Equatable {
+    public var text: String
+    public var notes: [WordNote]
+
+    public init(text: String, notes: [WordNote]) {
+        self.text = text
+        self.notes = notes
+    }
+
+    /// The reading with words fixed by hand while it ran, keyed by line and then word position. Notes on
+    /// those words are dropped, since she has settled them.
+    public func applying(_ edits: [Int: [Int: String]]) -> LocalReadResult {
+        guard !edits.isEmpty else { return self }
+        var lines = EntryBuilder.lines(of: text).map { $0.components(separatedBy: " ") }
+        for (line, words) in edits where lines.indices.contains(line) {
+            for (word, replacement) in words where lines[line].indices.contains(word) {
+                lines[line][word] = replacement
+            }
+        }
+        let kept = notes.filter { edits[$0.line]?[$0.word] == nil }
+        return LocalReadResult(text: lines.map { $0.joined(separator: " ") }.joined(separator: "\n"), notes: kept)
+    }
+}
+
 /// Reads a page on this Mac. Vision finds the lines, words, and letters, and proposes a reading; the
 /// decision model then checks each word, and each letter, against look-alike options.
 public struct LocalReader: Sendable {
@@ -84,7 +109,7 @@ public struct LocalReader: Sendable {
         self.settings = settings
     }
 
-    public func read(jpeg: Data, report: @escaping @Sendable (LocalReadEvent) async -> Void) async throws -> String {
+    public func read(jpeg: Data, report: @escaping @Sendable (LocalReadEvent) async -> Void) async throws -> LocalReadResult {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               let photo = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { throw PagePhotoError.unreadable }
@@ -98,6 +123,7 @@ public struct LocalReader: Sendable {
         // How well the best spelling of each word matched, so "Something else" can be judged against what
         // a good match looks like on this page.
         var bestMatches: [Double] = []
+        var notes: [WordNote] = []
         for (lineIndex, line) in layout.lines.enumerated() {
             var words: [String] = []
             for (wordIndex, word) in line.words.enumerated() {
@@ -157,11 +183,14 @@ public struct LocalReader: Sendable {
                 var core = parts.core
                 var confidence = 1.0
                 var compared = false
+                // Every spelling weighed for this word, with its best share, to offer as corrections.
+                var weighed: [String: Double] = [:]
                 if spellings.count > 1 {
                     let (choice, shares) = try await ask(letter: nil, labels: spellings, cores: spellings)
                     core = spellings[choice]
                     confidence = shares[choice]
                     compared = true
+                    for (spelling, share) in zip(spellings, shares) { weighed[spelling] = max(weighed[spelling] ?? 0, share) }
                 }
 
                 // Then letter by letter, where the word is in doubt. A word with no other spelling to
@@ -185,6 +214,9 @@ public struct LocalReader: Sendable {
                             return String(changed)
                         }
                         let (choice, shares) = try await ask(letter: parts.coreOffset + index, labels: options, cores: cores)
+                        for (option, share) in zip(cores, shares) where share >= 0.1 {
+                            weighed[option] = max(weighed[option] ?? 0, share)
+                        }
                         let picked = Array(options[choice])
                         if choice != 0 {
                             characters.replaceSubrange(index...index, with: picked)
@@ -248,6 +280,16 @@ public struct LocalReader: Sendable {
                 }
 
                 let text = parts.joined(core: core)
+                if core != parts.core || confidence < Self.closeCall {
+                    weighed[parts.core] = max(weighed[parts.core] ?? 0, core != parts.core ? 1 : 0)
+                    let options = weighed
+                        .filter { $0.key != core && !$0.key.isEmpty }
+                        .sorted { $0.value > $1.value }
+                        .prefix(4)
+                        .map { parts.joined(core: $0.key) }
+                    notes.append(WordNote(line: lineIndex, word: wordIndex, text: text, read: word.text,
+                                          options: Array(options), confidence: confidence))
+                }
                 words.append(text)
                 await report(.wordFinished(line: lineIndex, word: wordIndex, text: text, confidence: confidence))
             }
@@ -255,7 +297,7 @@ public struct LocalReader: Sendable {
         }
         let text = lines.joined(separator: "\n")
         await report(.finished(text))
-        return text
+        return LocalReadResult(text: text, notes: notes)
     }
 
     /// What "Something else" scores: a quarter of a typical good match on this page. If both spellings score
@@ -267,10 +309,11 @@ public struct LocalReader: Sendable {
     }
 
     /// Packages a local reading like one from Claude. Date lines become entry headings; names aren't found.
-    public static func transcription(of text: String) -> Transcription {
+    public static func transcription(of text: String, notes: [WordNote] = []) -> Transcription {
         let markers = EntryBuilder.lines(of: text).compactMap(DateHeadingParser.parse)
         return Transcription(text: text, wasCutOff: false,
-                             structure: PageStructure(markers: markers, names: [], text: text))
+                             structure: PageStructure(markers: markers, names: [], text: text,
+                                                      wordNotes: notes.isEmpty ? nil : notes))
     }
 }
 

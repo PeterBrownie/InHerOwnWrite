@@ -102,7 +102,7 @@ func runLocalModelCheck() async -> Bool {
             let began = Date()
             let text = try await reader.read(jpeg: jpeg) { event in
                 await counter.record(event)
-            }
+            }.text
             let seconds = Date().timeIntervalSince(began)
             let (decisions, cached, changed) = await counter.totals()
             let lines = EntryBuilder.lines(of: text)
@@ -345,4 +345,67 @@ func runSwitchRuleChecks() {
     check("turning a non-word into a word is easiest", maker.switchMargin(from: "tbe", to: "the") < maker.switchMargin(from: "bread", to: "broad")
           && maker.switchMargin(from: "hause", to: "house") < 1.5)
     check("changing only capitals needs more", maker.switchMargin(from: "Chand", to: "chand") > maker.switchMargin(from: "chand", to: "chank"))
+}
+
+func runEditingChecks(in directory: URL) throws {
+    print("\nFixing words and typos")
+    // Flowing text edits land in the text as written.
+    let written = "Tuesday, March 3\nWe walked to the riv-\ner and back. The sky\n  was grey.\n\nLater, tea."
+    let flow = LineFlow.mapped(written, headingLines: [0])
+    check("flowing text joins lines as before", flow.text == LineFlow.reflow(written, headingLines: [0])
+          && flow.text == "Tuesday, March 3\n\nWe walked to the riv-er and back. The sky was grey.\n\nLater, tea.")
+    let fixedTypo = flow.applying(flow.text.replacingOccurrences(of: "grey", with: "gray"), to: written)
+    check("a typo fixed in flowing text keeps the line breaks", fixedTypo == written.replacingOccurrences(of: "grey", with: "gray"))
+    let acrossHyphen = flow.applying(flow.text.replacingOccurrences(of: "riv-er", with: "rov-er"), to: written)
+    check("a word hyphenated across lines can be fixed", acrossHyphen.contains("rov-\ner"))
+    let atJoin = flow.applying(flow.text.replacingOccurrences(of: "sky was", with: "sky, it was"), to: written)
+    check("typing at a joined line break lands at the end of the line", atJoin.contains("The sky, it\n  was grey."))
+    check("finds a written word in the flowing text",
+          flow.flowedRange(for: (written as NSString).range(of: "grey")).map { (flow.text as NSString).substring(with: $0) } == "grey")
+
+    // Notes stay on their word and drop off when it's changed.
+    let note = WordNote(line: 1, word: 3, text: "tbe", read: "the", options: ["the", "tho"], confidence: 0.4)
+    let text = "Monday\nWe went to tbe lake"
+    check("finds a noted word", WordNote.locate([note], in: text).first.map { (text as NSString).substring(with: $0.range) } == "tbe")
+    check("follows a noted word when words are added before it",
+          WordNote.locate([note], in: "Monday\nThen we went to tbe lake").count == 1)
+    check("drops a note once its word is edited", WordNote.locate([note], in: "Monday\nWe went to the lake").isEmpty)
+    check("replaces a noted word", WordNote.replacing(note, with: "the", in: text) == "Monday\nWe went to the lake")
+
+    // Notes are saved with the page and can be cleared.
+    let vault = try Vault.create(in: directory.appendingPathComponent("notes"), password: "synthetic password").vault
+    let journal = try vault.createJournal(name: "Notes")
+    let page = try vault.addPage(journalID: journal.id, number: 1, jpeg: syntheticPhoto())
+    try vault.saveReading(pageID: page.id, transcription: LocalReader.transcription(of: text, notes: [note]))
+    check("saves word notes with the page", try vault.pages().first?.structure?.wordNotes == [note])
+    try vault.setWordNotes(pageID: page.id, notes: [])
+    check("clears word notes", try vault.pages().first?.structure?.wordNotes == nil)
+
+    // Words fixed in the reading window while the page was read.
+    let reading = LocalReadResult(text: "We went to tbe lake\nlater on",
+                                  notes: [WordNote(line: 0, word: 3, text: "tbe", read: "the", options: [], confidence: 0.4)])
+    let fixed = reading.applying([0: [3: "the"]])
+    check("fixes made while reading are saved", fixed.text == "We went to the lake\nlater on")
+    check("a fixed word's note is dropped", fixed.notes.isEmpty)
+
+    // Apostrophes Vision dropped or read as a letter.
+    check("offers didn't for didnt", CandidateMaker.apostropheOptions(for: "didnt") == ["didn't"])
+    check("offers I'm for Im", CandidateMaker.apostropheOptions(for: "Im") == ["I'm"])
+    check("offers wasn't for wasnit", CandidateMaker.apostropheOptions(for: "wasnit").contains("wasn't"))
+    check("offers it's for its", CandidateMaker.apostropheOptions(for: "its") == ["it's"])
+    check("leaves ordinary words alone", CandidateMaker.apostropheOptions(for: "house").isEmpty)
+    let maker = CandidateMaker(words: CandidateMaker.loadDictionary())
+    check("counts contractions as words", maker.isWord("didn't") && maker.isWord("I'm"))
+    check("an obvious apostrophe fix is easy", maker.switchMargin(from: "didnt", to: "didn't") < 2)
+}
+
+func runScribbleChecks() async throws {
+    print("\nScribbled-out writing")
+    let jpeg = try PagePhoto.prepare(handwrittenPage())
+    let image = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(jpeg as CFData, nil)!, 0, nil)!
+    let lines = try await PageLayoutFinder.find(in: image).lines.map { $0.words.map(\.text).joined(separator: " ") }
+    let marked = lines.filter { $0.contains(Scribbles.mark) }
+    check("marks the crossed-out word with ###", marked.count == 1 && marked.first?.hasPrefix(Scribbles.mark) == true)
+    check("marks nothing else", lines.joined(separator: " ").components(separatedBy: Scribbles.mark).count == 2)
+    if marked.count != 1 { lines.forEach { print("        | \($0)") } }
 }

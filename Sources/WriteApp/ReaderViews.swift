@@ -170,11 +170,6 @@ private struct PageColumn: View {
             if page.status == .reading {
                 ProgressView().controlSize(.small)
                 Text("Reading…").font(.caption).foregroundStyle(.secondary)
-            } else if !model.accurateLineBreaks {
-                Text("Turn on Accurate Line Breaks to edit")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
             Spacer()
             if page.status != .done && page.status != .reading {
@@ -219,19 +214,24 @@ private struct PageColumn: View {
                     get: { model.texts[page.id] ?? "" },
                     set: { model.editText($0, pageID: page.id) }
                 ),
-                isEditable: page.status != .reading
+                isEditable: page.status != .reading,
+                notes: model.showConfidence ? model.wordNotes(pageID: page.id) : [],
+                onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) }
             )
             .padding(4)
             .background(Theme.card)
         } else {
-            ScrollView {
-                Text(model.reflowedText(pageID: page.id))
-                    .font(.system(size: 15, design: .serif))
-                    .lineSpacing(5)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(18)
-            }
+            // Flowing paragraphs can be edited too; each change is made to the text as written.
+            JournalTextEditor(
+                text: Binding(
+                    get: { model.reflowedText(pageID: page.id) },
+                    set: { model.editReflowed($0, pageID: page.id) }
+                ),
+                isEditable: page.status != .reading,
+                notes: model.showConfidence ? model.reflowedWordNotes(pageID: page.id) : [],
+                onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) }
+            )
+            .padding(4)
             .background(Theme.card)
         }
     }

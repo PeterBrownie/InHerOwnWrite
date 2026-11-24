@@ -604,6 +604,11 @@ public struct SettingsSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Toggle("Show Reading Confidence", isOn: $model.showConfidence)
+                Text("Highlights words read on this Mac that the model wasn't sure of, and underlines ones it changed. Click one to fix it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Toggle("Show Page Photo", isOn: $model.showPhoto)
                 Toggle("Show Two Pages", isOn: $model.twoPageSpread)
             }

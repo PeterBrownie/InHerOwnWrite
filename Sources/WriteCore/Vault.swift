@@ -433,6 +433,17 @@ public final class Vault: @unchecked Sendable {
         }
     }
 
+    /// Replaces the notes on words a reading on this Mac changed or wasn't sure of.
+    public func setWordNotes(pageID: UUID, notes: [WordNote]) throws {
+        try locked {
+            var page = try page(id: pageID)
+            guard page.structure != nil else { return }
+            page.structure?.wordNotes = notes.isEmpty ? nil : notes
+            try database.run("UPDATE pages SET record = ? WHERE id = ?",
+                             [.blob(try sealRecord(page)), .text(Self.key(pageID))])
+        }
+    }
+
     public func setStatus(pageID: UUID, status: ReadingStatus, problem: String? = nil) throws {
         try locked {
             var page = try page(id: pageID)

@@ -782,6 +782,8 @@ if arguments.contains("--local") {
             try await runAPIChecks()
             try await runLocalReadingChecks()
             runSwitchRuleChecks()
+            try runEditingChecks(in: directory)
+            try await runScribbleChecks()
             try await runPageScanChecks()
             try await runFlattenChecks()
             runUpdaterChecks()

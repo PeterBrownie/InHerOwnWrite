@@ -61,6 +61,14 @@ public struct CandidateMaker: Sendable {
             }
         }
         words.formUnion(commonShortWords)
+        // The word list has no contractions, but lists some without their apostrophe ("didnt"), which would
+        // make the fix look like a swap between two real words. Bare forms that are words of their own stay.
+        let ownWords: Set<String> = ["its", "were", "well", "ill", "hell", "shell", "shed", "wed", "lets", "id"]
+        for contraction in contractions {
+            let bare = contraction.replacingOccurrences(of: "'", with: "")
+            if !ownWords.contains(bare) { words.remove(bare) }
+        }
+        words.formUnion(contractions)
         // Dates are common in journals, and the word list leaves out their abbreviations.
         words.formUnion(["jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
                          "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
@@ -110,13 +118,15 @@ public struct CandidateMaker: Sendable {
         return Array(options.prefix(max(limit, 1)))
     }
 
-    /// Vision's reading first, then its other readings, then real words a single look-alike away.
+    /// Vision's reading first, then its other readings, then contractions it may have read without the
+    /// apostrophe, then real words a single look-alike away.
     public func wordOptions(reading: String, alternatives: [String], limit: Int) -> [String] {
         var options = [reading]
         func add(_ word: String) {
             if options.count < limit, !word.isEmpty, !options.contains(word) { options.append(word) }
         }
         alternatives.forEach(add)
+        Self.apostropheOptions(for: reading).forEach(add)
         let characters = Array(reading)
         for (index, character) in characters.enumerated() where character.isLetter {
             for alternative in Self.letterOptions(for: character, limit: 12).dropFirst() {
@@ -127,6 +137,35 @@ public struct CandidateMaker: Sendable {
             }
         }
         return options
+    }
+}
+
+/// Contractions Vision often reads without their apostrophe, or with it as a stray letter.
+let contractions: Set<String> = [
+    "i'm", "i've", "i'd", "i'll", "you're", "you've", "you'd", "you'll", "he's", "he'd", "he'll", "she's", "she'd",
+    "she'll", "it's", "it'd", "it'll", "we're", "we've", "we'd", "we'll", "they're", "they've", "they'd", "they'll",
+    "that's", "that'd", "that'll", "there's", "here's", "what's", "where's", "who's", "how's", "let's",
+    "don't", "doesn't", "didn't", "can't", "couldn't", "won't", "wouldn't", "shouldn't", "isn't", "aren't",
+    "wasn't", "weren't", "hasn't", "haven't", "hadn't", "mustn't", "needn't", "ain't", "y'all", "ma'am", "o'clock",
+]
+
+extension CandidateMaker {
+    /// The contraction a reading may stand for: "didnt" or "Im" missing the apostrophe, or "wasnit" with it
+    /// read as a letter. Keeps a leading capital.
+    public static func apostropheOptions(for reading: String) -> [String] {
+        let lower = reading.lowercased()
+        guard lower.count >= 2, lower.allSatisfy({ $0.isLetter || $0 == "'" }) else { return [] }
+        var found: [String] = []
+        for contraction in contractions where contraction != lower {
+            let bare = contraction.replacingOccurrences(of: "'", with: "")
+            let misread = contraction.count == lower.count
+                && zip(contraction, lower).filter { $0 != $1 }.count == 1
+                && zip(contraction, lower).contains { $0 == "'" && $1 != "'" }
+            if bare == lower || misread { found.append(contraction) }
+        }
+        let capitalized = reading.first?.isUppercase == true
+        // "I'm", "I've", and the rest always take a capital I.
+        return found.sorted().map { capitalized || $0.hasPrefix("i'") ? $0.prefix(1).uppercased() + $0.dropFirst() : $0 }
     }
 }
 

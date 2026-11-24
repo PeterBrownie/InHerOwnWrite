@@ -61,6 +61,7 @@ public struct InHerOwnWriteApp: App {
                 Toggle("Show Page Photo", isOn: $model.showPhoto)
                 Toggle("Show Two Pages", isOn: $model.twoPageSpread)
                 Toggle("Accurate Line Breaks", isOn: $model.accurateLineBreaks)
+                Toggle("Show Reading Confidence", isOn: $model.showConfidence)
                 Divider()
             }
             CommandGroup(after: .appInfo) {

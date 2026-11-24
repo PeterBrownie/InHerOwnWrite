@@ -111,7 +111,7 @@ public enum PageLayoutFinder {
             .sorted { $0.box.minY < $1.box.minY }
         // A first or last line that is only a number is the page number, even if the overview missed it.
         var pageNumber = number?.value
-        var kept = lines
+        var kept = Scribbles.mark(Scribbles.find(in: image, lineHeight: lineHeight), in: lines)
         for index in [kept.count - 1, 0] where kept.indices.contains(index) {
             if let value = PageNumberFinder.number(in: kept[index].words.map(\.text).joined(separator: " ")) {
                 pageNumber = pageNumber ?? value
@@ -193,6 +193,116 @@ public enum PageLayoutFinder {
     /// Vision's rectangles start at the bottom left.
     static func topLeft(_ rect: CGRect) -> CGRect {
         CGRect(x: rect.minX, y: 1 - rect.maxY, width: rect.width, height: rect.height)
+    }
+}
+
+/// Finds writing that has been scribbled out. Vision reads a scribble as stray letters or skips it, so it is
+/// found from the ink itself instead: a scribble is a blot whose box is mostly ink, while letters, even
+/// joined-up words, leave most of their box empty. Scribbles become "###", as in readings from Claude.
+public enum Scribbles {
+    public static let mark = "###"
+
+    /// Boxes of scribbled-out writing, normalized to the page with the origin at the top left.
+    public static func find(in image: CGImage, lineHeight: Double) -> [CGRect] {
+        blots(in: image, lineHeight: lineHeight).filter(isScribble).map(\.box)
+    }
+
+    struct Blot {
+        let box: CGRect
+        /// Share of the box that is ink.
+        let fill: Double
+        /// Size relative to the line pitch.
+        let height: Double
+        let width: Double
+        /// Share of the blot's ink that is solid: inside a run of ink at least a pen stroke and a half wide.
+        let solid: Double
+    }
+
+    /// Tested on three real pages: scribbles had a solid core of 0.3 to 0.4, and letters, even heavy ones,
+    /// 0.15 or less. Ink touching the photo's edge is paper edges, binding, or shadow.
+    static func isScribble(_ blot: Blot) -> Bool {
+        let edge = 0.01
+        return blot.solid >= 0.2 && blot.fill >= 0.4 && blot.height >= 0.45 && blot.width >= 0.45
+            && blot.height <= 2.5 && blot.width <= 8
+            && blot.box.minX > edge && blot.box.maxX < 1 - edge && blot.box.minY > edge && blot.box.maxY < 1 - edge
+    }
+
+    static func blots(in image: CGImage, lineHeight: Double) -> [Blot] {
+        guard let ink = InkMap(image: image, maxDimension: 1000) else { return [] }
+        let width = ink.width, height = ink.height
+        let threshold = ink.middleThreshold()
+        let pitch = lineHeight * Double(height)
+        var seen = [Bool](repeating: false, count: width * height)
+        var found: [Blot] = []
+        var stack: [Int] = []
+        for start in 0..<(width * height) where !seen[start] && ink.pixels[start] < threshold {
+            seen[start] = true
+            stack.append(start)
+            var minX = width, maxX = 0, minY = height, maxY = 0, count = 0
+            while let index = stack.popLast() {
+                let x = index % width, y = index / width
+                count += 1
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+                for neighbor in [index - 1, index + 1, index - width, index + width] {
+                    guard neighbor >= 0, neighbor < width * height, !seen[neighbor] else { continue }
+                    if (neighbor == index - 1 && x == 0) || (neighbor == index + 1 && x == width - 1) { continue }
+                    if ink.pixels[neighbor] < threshold {
+                        seen[neighbor] = true
+                        stack.append(neighbor)
+                    }
+                }
+            }
+            let boxWidth = Double(maxX - minX + 1), boxHeight = Double(maxY - minY + 1)
+            guard boxHeight >= pitch * 0.3, boxWidth >= pitch * 0.3, count > 20 else { continue }
+            let fill = Double(count) / (boxWidth * boxHeight)
+            // How much of the ink is solid, rather than strokes: ink with ink a few pixels away on all sides.
+            let reach = max(2, Int(pitch * 0.06))
+            var solid = 0
+            for y in minY...maxY {
+                for x in minX...maxX where ink.pixels[y * width + x] < threshold {
+                    let around = [(x - reach, y), (x + reach, y), (x, y - reach), (x, y + reach)]
+                    if around.allSatisfy({ $0.0 >= 0 && $0.0 < width && $0.1 >= 0 && $0.1 < height
+                        && ink.pixels[$0.1 * width + $0.0] < threshold }) { solid += 1 }
+                }
+            }
+            found.append(Blot(box: CGRect(x: Double(minX) / Double(width), y: Double(minY) / Double(height),
+                                          width: boxWidth / Double(width), height: boxHeight / Double(height)),
+                              fill: fill, height: boxHeight / pitch, width: boxWidth / pitch,
+                              solid: Double(solid) / Double(count)))
+        }
+        return found
+    }
+
+    /// Replaces the words a scribble covers with "###", or adds "###" where it sits between words.
+    static func mark(_ scribbles: [CGRect], in lines: [LayoutLine]) -> [LayoutLine] {
+        var lines = lines
+        for scribble in scribbles {
+            // The line it sits on: the most vertical overlap.
+            let overlaps = lines.map { line -> Double in
+                max(0, min(line.box.maxY, scribble.maxY) - max(line.box.minY, scribble.minY))
+            }
+            guard let index = overlaps.indices.max(by: { overlaps[$0] < overlaps[$1] }),
+                  overlaps[index] > scribble.height * 0.3,
+                  // Within the line's own span, not off in the margin.
+                  scribble.midX >= lines[index].box.minX - scribble.width, scribble.midX <= lines[index].box.maxX
+            else { continue }
+            var words = lines[index].words
+            let covered = words.indices.filter { word in
+                let box = words[word].box
+                let shared = max(0, min(box.maxX, scribble.maxX) - max(box.minX, scribble.minX))
+                return shared >= box.width * 0.4
+            }
+            let note = LayoutWord(text: mark, alternatives: [], box: scribble,
+                                  letters: LetterSplitter.evenly(text: mark, box: scribble))
+            if let first = covered.first, let last = covered.last {
+                words.replaceSubrange(first...last, with: [note])
+            } else {
+                let position = words.firstIndex { $0.box.midX > scribble.midX } ?? words.count
+                words.insert(note, at: position)
+            }
+            lines[index].words = words
+        }
+        return lines
     }
 }
 

@@ -21,6 +21,8 @@ public final class LocalReadSession: ObservableObject {
         public var box: CGRect
         public var confidence: Double?
         public var changed: Bool
+        /// Fixed by hand while the reading ran.
+        public var edited = false
     }
 
     public struct Summary: Identifiable, Equatable {
@@ -55,6 +57,8 @@ public final class LocalReadSession: ObservableObject {
     @Published public private(set) var modelMilliseconds = 0.0
     @Published public private(set) var startedAt: Date?
     @Published public private(set) var finishedAt: Date?
+    /// Words fixed by hand while reading, by line and word position, applied when the page is saved.
+    @Published public private(set) var edits: [Int: [Int: String]] = [:]
 
     public init(pageID: UUID, pageNumber: Int, journalName: String, photo: NSImage?, settings: LocalReadSettings) {
         self.pageID = pageID
@@ -88,6 +92,18 @@ public final class LocalReadSession: ObservableObject {
     public var transcript: String {
         lines.map { line in line.filter { $0.confidence != nil }.map(\.text).joined(separator: " ") }
             .joined(separator: "\n")
+    }
+
+    /// Fixes a word that has already been decided. It's saved with the page when the reading finishes.
+    public func edit(line: Int, word: Int, to text: String) {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        guard !cleaned.isEmpty, lines.indices.contains(line), lines[line].indices.contains(word),
+              lines[line][word].confidence != nil
+        else { return }
+        lines[line][word].text = cleaned
+        lines[line][word].edited = true
+        edits[line, default: [:]][word] = cleaned
     }
 
     public func setPhase(_ phase: Phase) {
@@ -279,15 +295,18 @@ extension AppModel {
                 session.setPhase(.findingWords)
                 let reader = LocalReader(server: server, candidates: CandidateMaker(words: vocabulary),
                                          settings: session.settings)
-                let text = try await reader.read(jpeg: jpeg) { event in
+                let result = try await reader.read(jpeg: jpeg) { event in
                     await MainActor.run { session.apply(event) }
                 }
                 try Task.checkCancellation()
                 // The page may have been deleted or replaced while it was being read.
                 if localQueue.contains(id) {
                     pendingEdits[id] = nil
-                    try vault.saveReading(pageID: id, transcription: LocalReader.transcription(of: text))
-                    texts[id] = text
+                    // Words she fixed in the window while it read.
+                    let final = result.applying(session.edits)
+                    try vault.saveReading(pageID: id, transcription: LocalReader.transcription(of: final.text,
+                                                                                               notes: final.notes))
+                    texts[id] = final.text
                 }
                 session.setPhase(.done)
             } catch is CancellationError {
@@ -313,6 +332,27 @@ extension AppModel {
             }
             localQueue.removeAll { $0 == id }
             try? reload()
+        }
+    }
+
+    /// Words on a page that a reading on this Mac changed or wasn't sure of, where they are in its text now.
+    public func wordNotes(pageID: UUID) -> [(note: WordNote, range: NSRange)] {
+        guard let notes = page(id: pageID)?.structure?.wordNotes, let text = texts[pageID] else { return [] }
+        return WordNote.locate(notes, in: text)
+    }
+
+    /// Settles a noted word: replaces it, or keeps it as read when `replacement` is nil. Either way its
+    /// underline goes away.
+    public func resolve(_ note: WordNote, pageID: UUID, replacement: String?) {
+        guard let vault, let notes = page(id: pageID)?.structure?.wordNotes else { return }
+        if let replacement, let text = texts[pageID], let changed = WordNote.replacing(note, with: replacement, in: text) {
+            editText(changed, pageID: pageID)
+        }
+        do {
+            try vault.setWordNotes(pageID: pageID, notes: notes.filter { $0 != note })
+            try reload()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

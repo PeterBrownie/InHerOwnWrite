@@ -28,6 +28,7 @@ public final class AppModel: ObservableObject {
         static let twoPages = "twoPageSpread"
         static let lineBreaks = "accurateLineBreaks"
         static let readsLocally = "readsLocally"
+        static let showConfidence = "showConfidence"
         static let localDepth = "localDepth"
         static let localLetterOptions = "localLetterOptions"
     }
@@ -74,6 +75,11 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// Marks words a reading on this Mac changed or wasn't sure of.
+    @Published public var showConfidence: Bool {
+        didSet { UserDefaults.standard.set(showConfidence, forKey: PreferenceKey.showConfidence) }
+    }
+
     // Reading on this Mac (see LocalReading.swift).
     @Published public var readsLocally: Bool {
         didSet { UserDefaults.standard.set(readsLocally, forKey: PreferenceKey.readsLocally) }
@@ -115,6 +121,7 @@ public final class AppModel: ObservableObject {
         twoPageSpread = defaults.bool(forKey: PreferenceKey.twoPages)
         accurateLineBreaks = defaults.object(forKey: PreferenceKey.lineBreaks) as? Bool ?? true
         readsLocally = defaults.bool(forKey: PreferenceKey.readsLocally)
+        showConfidence = defaults.object(forKey: PreferenceKey.showConfidence) as? Bool ?? true
         let depth = defaults.string(forKey: PreferenceKey.localDepth).flatMap(LocalReadDepth.init(rawValue:)) ?? .quick
         let letterOptions = defaults.object(forKey: PreferenceKey.localLetterOptions) as? Int ?? 6
         localSettings = LocalReadSettings(depth: depth, letterOptions: min(max(letterOptions, 2), 10))
@@ -434,9 +441,27 @@ public final class AppModel: ObservableObject {
 
     /// The page text with handwritten line wraps joined, for when line breaks are off.
     public func reflowedText(pageID: UUID) -> String {
+        flowed(pageID: pageID).text
+    }
+
+    func flowed(pageID: UUID) -> LineFlow.Flowed {
         let text = texts[pageID] ?? ""
         let headings = EntryBuilder.headings(in: text, structure: page(id: pageID)?.structure)
-        return LineFlow.reflow(text, headingLines: Set(headings.map(\.line)))
+        return LineFlow.mapped(text, headingLines: Set(headings.map(\.line)))
+    }
+
+    /// An edit made with line breaks off, carried over to the text as written, so her line breaks stay.
+    public func editReflowed(_ edited: String, pageID: UUID) {
+        let written = texts[pageID] ?? ""
+        let flow = flowed(pageID: pageID)
+        guard edited != flow.text else { return }
+        editText(flow.applying(edited, to: written), pageID: pageID)
+    }
+
+    /// Noted words located in the flowing text, for marking them with line breaks off.
+    public func reflowedWordNotes(pageID: UUID) -> [(note: WordNote, range: NSRange)] {
+        let flow = flowed(pageID: pageID)
+        return wordNotes(pageID: pageID).compactMap { item in flow.flowedRange(for: item.range).map { (item.note, $0) } }
     }
 
     public func editText(_ text: String, pageID: UUID) {

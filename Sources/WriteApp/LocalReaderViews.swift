@@ -254,36 +254,48 @@ struct StatsRow: View {
 struct DecisionCard: View {
     @ObservedObject var session: LocalReadSession
 
+    /// Fixed sizes keep the card the same height from word to word, so the text below stays put.
+    private static let cropHeight: CGFloat = 76
+    private static let rowHeight: CGFloat = 26
+    private static let visibleRows: CGFloat = 7
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("NOW DECIDING").font(.caption2.weight(.semibold)).foregroundStyle(.secondary).tracking(1)
-            if let crop = session.crop {
-                Image(decorative: crop, scale: 1)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(maxHeight: 64)
-                    .frame(maxWidth: .infinity)
-                    .padding(6)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
-            }
-            if let question = session.question {
-                Text(title(question)).font(.callout.weight(.medium))
-                let maxShare = displayShares.max() ?? 1
-                ForEach(Array(question.labels.enumerated()), id: \.offset) { index, label in
-                    OptionRow(label: question.letter == nil ? label : "\(label)",
-                              candidate: question.candidates[index],
-                              share: shareFor(index),
-                              relative: maxShare > 0 ? shareFor(index).map { $0 / maxShare } : nil,
-                              isRead: index == 0,
-                              isChosen: session.choice == index,
-                              isLetter: question.letter != nil)
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).fill(Color.white)
+                if let crop = session.crop {
+                    Image(decorative: crop, scale: 1)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .padding(6)
                 }
-            } else {
-                Text(session.isActive ? "Waiting for the next question…" : "No question right now.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
+            .frame(height: Self.cropHeight)
+            Text(session.question.map(title) ?? (session.isActive ? "Waiting for the next question…" : "No question right now."))
+                .font(.callout.weight(.medium))
+                .foregroundStyle(session.question == nil ? .secondary : .primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let question = session.question {
+                        let maxShare = displayShares.max() ?? 1
+                        ForEach(Array(question.labels.enumerated()), id: \.offset) { index, label in
+                            OptionRow(label: label,
+                                      candidate: question.candidates[index],
+                                      share: shareFor(index),
+                                      relative: maxShare > 0 ? shareFor(index).map { $0 / maxShare } : nil,
+                                      isRead: index == 0,
+                                      isChosen: session.choice == index,
+                                      isLetter: question.letter != nil)
+                                .frame(height: Self.rowHeight)
+                        }
+                    }
+                }
+            }
+            .frame(height: Self.rowHeight * Self.visibleRows)
         }
         .padding(14)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
@@ -363,14 +375,22 @@ struct TranscriptCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("TEXT SO FAR").font(.caption2.weight(.semibold)).foregroundStyle(.secondary).tracking(1)
-            Text(attributed)
-                .font(.system(size: 15, design: .serif))
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(session.lines.enumerated()), id: \.offset) { lineIndex, line in
+                    WordFlow(spacing: 5) {
+                        ForEach(Array(line.enumerated()), id: \.offset) { wordIndex, word in
+                            TranscriptWord(session: session, line: lineIndex, index: wordIndex, word: word)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 12) {
                 legend(color: Theme.accent, "changed by the model")
                 legend(color: .orange, "close call")
+                legend(color: .blue, "fixed by you")
+                Spacer()
+                Text("Click a word to fix it.")
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -386,29 +406,96 @@ struct TranscriptCard: View {
             Text(text)
         }
     }
+}
 
-    private var attributed: AttributedString {
-        var result = AttributedString()
-        for (lineIndex, line) in session.lines.enumerated() {
-            if lineIndex > 0 { result += AttributedString("\n") }
-            for (wordIndex, word) in line.enumerated() {
-                if wordIndex > 0 { result += AttributedString(" ") }
-                var piece = AttributedString(word.text)
-                if session.current?.line == lineIndex && session.current?.word == wordIndex {
-                    piece.backgroundColor = Theme.accent.opacity(0.18)
-                } else if word.confidence == nil {
-                    piece.foregroundColor = .secondary.opacity(0.45)
-                }
-                if word.changed {
-                    piece.foregroundColor = Theme.accent
-                    piece.underlineStyle = .single
-                } else if let confidence = word.confidence, confidence < LocalReader.closeCall {
-                    piece.underlineStyle = Text.LineStyle(pattern: .dot, color: .orange)
-                }
-                result += piece
+/// One word of the text so far. Once decided, clicking it opens a field to fix it.
+struct TranscriptWord: View {
+    @ObservedObject var session: LocalReadSession
+    let line: Int
+    let index: Int
+    let word: LocalReadSession.WordState
+    @ViewState private var isEditing = false
+    @ViewState private var draft = ""
+
+    private var isCurrent: Bool { session.current?.line == line && session.current?.word == index }
+    private var isDecided: Bool { word.confidence != nil }
+    private var isCloseCall: Bool { (word.confidence ?? 1) < LocalReader.closeCall }
+
+    var body: some View {
+        Text(word.text)
+            .font(.system(size: 15, design: .serif))
+            .foregroundStyle(color)
+            .underline(word.edited || word.changed || isCloseCall,
+                       pattern: isCloseCall && !word.changed && !word.edited ? .dot : .solid,
+                       color: word.edited ? .blue : (word.changed ? Theme.accent : .orange))
+            .padding(.horizontal, 1)
+            .background(isCurrent ? Theme.accent.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 3))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard isDecided else { return }
+                draft = word.text
+                isEditing = true
             }
+            .help(isDecided ? "Click to fix this word" : "Not decided yet")
+            .popover(isPresented: $isEditing, arrowEdge: .bottom) {
+                HStack {
+                    TextField("Word", text: $draft)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                        .onSubmit(save)
+                    Button("Fix", action: save)
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(10)
+            }
+    }
+
+    private var color: Color {
+        if word.edited { return .blue }
+        if word.changed { return Theme.accent }
+        return isDecided || isCurrent ? .primary : .secondary.opacity(0.45)
+    }
+
+    private func save() {
+        session.edit(line: line, word: index, to: draft)
+        isEditing = false
+    }
+}
+
+/// Lays words out left to right, wrapping onto new rows like text.
+struct WordFlow: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width {
+                y += rowHeight + 2
+                x = 0
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            widest = max(widest, x - spacing)
         }
-        return result
+        return CGSize(width: min(widest, width), height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX {
+                y += rowHeight + 2
+                x = bounds.minX
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
 
