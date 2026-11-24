@@ -25,7 +25,7 @@ of `@State`: the macro plugin ships only with Xcode. Swift 5 language mode.
 | Command | What it does |
 | --- | --- |
 | `swift build` | Debug build |
-| `swift run WriteCheck` | All offline checks: vault, encryption, entries, photo handling, page finding, flattening, local reading rules, editing, the update bar, rotation. Must pass before committing. |
+| `swift run WriteCheck` | All offline checks: vault, encryption, entries, photo handling, page finding, splitting both pages, photo order, flattening, local reading rules, editing, the update bar, rotation. Must pass before committing. |
 | `swift run WriteCheck --local` | Reads an invented page with the real decision model (needs the model downloaded). Add `--thorough` for Careful mode. |
 | `swift run WriteCheck --live` | Reads an invented page through the Anthropic API (needs `ANTHROPIC_API_KEY`). |
 | `swift run WriteCheck --render <folder>` | Renders the app's screens to PNGs for a visual check. |

@@ -94,6 +94,8 @@ public struct AnalysisDetail: View {
     @ViewState private var showHidden = false
     @ViewState private var showTable = false
     @ViewState private var confirmRead = false
+    @ViewState private var rhythm: EntryRhythm?
+    @ViewState private var byWeek = false
 
     private static let wordLimit = 40
 
@@ -111,6 +113,9 @@ public struct AnalysisDetail: View {
                 header
                 if let missing = missingNamesNotice { missing }
                 termSection
+                if let rhythm, rhythm.entryCount > 0 {
+                    entriesSection(rhythm)
+                }
                 if let snapshot {
                     HStack(alignment: .top, spacing: 24) {
                         wordsSection(snapshot)
@@ -127,6 +132,7 @@ public struct AnalysisDetail: View {
             let made = await model.makeAnalysisSnapshot()
             guard !Task.isCancelled else { return }
             snapshot = made
+            rhythm = made.entryRhythm()
             result = made.term(term)
         }
         .onChange(of: term) { _, value in
@@ -254,6 +260,64 @@ public struct AnalysisDetail: View {
         }
     }
 
+    // MARK: - Entries over time
+
+    private func entriesSection(_ rhythm: EntryRhythm) -> some View {
+        let bins = byWeek ? rhythm.byWeek : rhythm.byMonth
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Entries").font(.headline)
+                Spacer()
+                if rhythm.datedCount > 0 {
+                    Picker("Show by", selection: $byWeek) {
+                        Text("Per Month").tag(false)
+                        Text("Per Week").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+            HStack(alignment: .top, spacing: 28) {
+                StatTile(label: "Entries", value: rhythm.entryCount)
+                if let perMonth = rhythm.perMonth, let perWeek = rhythm.perWeek {
+                    StatTile(label: "Average per month", value: perMonth.formatted(.number.precision(.fractionLength(1))))
+                    StatTile(label: "Average per week", value: perWeek.formatted(.number.precision(.fractionLength(1))))
+                }
+                if let gap = rhythm.longestGap {
+                    StatTile(label: "Longest gap", value: count(gap.days, "day"), detail: "\(gap.from) to \(gap.to)")
+                }
+                Spacer()
+            }
+            if rhythm.datedCount == 0 {
+                Text("None of these entries has a date yet, so they can't be shown over time.")
+                    .foregroundStyle(.secondary)
+            } else {
+                if bins.count >= 2 {
+                    TimelineChart(bins: bins, term: "entries", noun: ("entry", "entries"))
+                        .frame(height: 180)
+                }
+                Text(rhythmNote(rhythm))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The span the averages cover, and how many entries were left out for having no date.
+    private func rhythmNote(_ rhythm: EntryRhythm) -> String {
+        var note = ""
+        if let first = rhythm.first, let last = rhythm.last {
+            note = first == last ? "All dated entries are from \(first)." : "Averages run from \(first) to \(last), empty months and weeks included."
+        }
+        let undated = rhythm.entryCount - rhythm.datedCount
+        if undated > 0 {
+            note += " \(count(undated, "entry", "entries")) without a date \(undated == 1 ? "isn't" : "aren't") counted by date."
+        }
+        return note
+    }
+
     // MARK: - Top words and names
 
     private func wordsSection(_ snapshot: AnalysisSnapshot) -> some View {
@@ -308,7 +372,18 @@ public struct AnalysisDetail: View {
 
 private struct StatTile: View {
     let label: String
-    let value: Int
+    let value: String
+    var detail: String?
+
+    init(label: String, value: String, detail: String? = nil) {
+        self.label = label
+        self.value = value
+        self.detail = detail
+    }
+
+    init(label: String, value: Int) {
+        self.init(label: label, value: value.formatted())
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -316,8 +391,14 @@ private struct StatTile: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-            Text(value.formatted())
+            Text(value)
                 .font(.system(size: 26, weight: .semibold))
+            if let detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 }
@@ -399,6 +480,8 @@ private struct HiddenWordsPopover: View {
 private struct TimelineChart: View {
     let bins: [TimelineBin]
     let term: String
+    /// What each bar counts, singular and plural.
+    var noun = ("mention", "mentions")
     @ViewState private var hovered: Int?
 
     private let axisWidth: CGFloat = 36
@@ -478,14 +561,14 @@ private struct TimelineChart: View {
             }
         }
         .accessibilityElement()
-        .accessibilityLabel("Chart of mentions of \(term) over the journal")
+        .accessibilityLabel(noun.0 == "mention" ? "Chart of mentions of \(term) over the journal" : "Chart of \(term) over the journal")
         .accessibilityValue(bins.filter { $0.count > 0 }.map { "\($0.label): \($0.count)" }.joined(separator: ", "))
     }
 
     private func tooltip(_ bin: TimelineBin) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(bin.label).font(.caption.weight(.semibold)).lineLimit(1)
-            Text("\(bin.count) \(bin.count == 1 ? "mention" : "mentions") · \(bin.pageCount) \(bin.pageCount == 1 ? "page" : "pages")")
+            Text("\(bin.count) \(bin.count == 1 ? noun.0 : noun.1) · \(bin.pageCount) \(bin.pageCount == 1 ? "page" : "pages")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

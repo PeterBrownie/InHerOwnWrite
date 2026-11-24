@@ -342,6 +342,25 @@ func runEntryChecks() {
     check("names only count when present", snapshot.nameStats(hidden: []).map(\.key) == ["body"])
     let onlyPage4 = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:])
     check("limits analysis to chosen pages", onlyPage4.pageCount == 1 && onlyPage4.term("body")?.total == 0)
+
+    let rhythm = snapshot.entryRhythm()
+    check("counts entries, dated or not", rhythm.entryCount == 5 && rhythm.datedCount == 3)
+    check("an entry over two pages counts once", rhythm.byMonth.map(\.count) == [3])
+    let spaced = [page(1), page(2)]
+    let spacedText = [
+        spaced[0].id: "Monday, January 5, 2026\nfirst\n\nJanuary 6, 2026\nsecond\n\nJanuary 20, 2026\nthird",
+        spaced[1].id: "March 2, 2026\nfourth\n\nMarch 3, 2026\nfifth",
+    ]
+    let spacedEntries = EntryBuilder.build(pages: spaced, journalOrder: [journal]) { spacedText[$0] ?? "" }
+    let months = AnalysisSnapshot(entries: spacedEntries, includedPages: Set(spaced.map(\.id)), names: [], journalNames: [:])
+        .entryRhythm()
+    check("counts entries per month, empty months included", months.byMonth.map(\.count) == [3, 0, 2])
+    check("counts entries per week from Monday", months.byWeek.count == 9 && months.byWeek.map(\.count) == [2, 0, 1, 0, 0, 0, 0, 0, 2]
+          && months.byWeek.first?.label == "Week of Jan 5, 2026")
+    check("averages over the whole span", abs((months.perMonth ?? 0) - 5.0 / 3) < 1e-9 && abs((months.perWeek ?? 0) - 5.0 / 9) < 1e-9)
+    check("finds the longest gap", months.longestGap == EntryRhythm.Gap(days: 41, from: "Jan 20, 2026", to: "Mar 2, 2026"))
+    let undated = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:]).entryRhythm()
+    check("undated entries have no averages", undated.entryCount == 1 && undated.perMonth == nil && undated.longestGap == nil)
 }
 
 extension Array {
@@ -456,7 +475,7 @@ func runAPIChecks() async throws {
 // MARK: - Rendering
 
 @MainActor
-func render<V: View>(_ view: V, size: CGSize, to url: URL, dark: Bool = false) async {
+func render<V: View>(_ view: V, size: CGSize, to url: URL, dark: Bool = false, wait: Double = 1.2) async {
     let hosting = NSHostingView(rootView: view)
     hosting.frame = CGRect(origin: .zero, size: size)
     let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .resizable, .fullSizeContentView],
@@ -467,7 +486,7 @@ func render<V: View>(_ view: V, size: CGSize, to url: URL, dark: Bool = false) a
     window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
     window.orderFrontRegardless()
     // Suspending lets SwiftUI's main-actor work, such as loading the page photo, finish.
-    try? await Task.sleep(nanoseconds: 1_200_000_000)
+    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
     hosting.layoutSubtreeIfNeeded()
     if let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
@@ -513,6 +532,19 @@ func runRender(output: URL, sample: URL?) async throws {
     _ = model.createJournal(name: "Spread Test")
     await render(UploadSheet(preloaded: spread).environmentObject(model), size: CGSize(width: 820, height: 600),
                  to: output.appendingPathComponent("4d-upload-with-photo.png"))
+    // Both pages, photographed sideways: the sheet turns the photo upright and splits it at the fold.
+    UserDefaults.standard.set(true, forKey: "bothPages")
+    let sideways = try PagePhoto.rotated(openJournal(), degrees: 90)
+    await render(CropEditor(image: NSImage(data: openJournal())!, crop: .constant(CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)),
+                            angle: 3, split: .constant(0.52)).padding(10),
+                 size: CGSize(width: 520, height: 460), to: output.appendingPathComponent("4e-crop-both-pages.png"))
+    await render(UploadSheet(preloaded: sideways).environmentObject(model), size: CGSize(width: 820, height: 600),
+                 to: output.appendingPathComponent("4f-upload-both-pages.png"), wait: 4)
+    if let sample {
+        await render(UploadSheet(preloaded: try PagePhoto.prepare(try Data(contentsOf: sample))).environmentObject(model),
+                     size: CGSize(width: 820, height: 600), to: output.appendingPathComponent("4g-upload-sample-both-pages.png"), wait: 4)
+    }
+    UserDefaults.standard.removeObject(forKey: "bothPages")
     if let made = model.journals.first(where: { $0.name == "Spread Test" }) { model.deleteJournal(id: made.id) }
 
     let photo = try sample.map { try PagePhoto.prepare(try Data(contentsOf: $0)) }
@@ -826,6 +858,8 @@ if arguments.contains("--local") {
             try runTiltedCropChecks()
             try await runWordPlacementChecks()
             try await runPageScanChecks()
+            try await runSpreadChecks()
+            try runPhotoOrderChecks()
             try await runFlattenChecks()
             runUpdaterChecks()
             runReleaseUpdateChecks()

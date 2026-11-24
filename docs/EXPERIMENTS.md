@@ -98,6 +98,22 @@ read each line more than once, and their differences become options for the mode
 - **Paper edges:** brightness against the background, plus 2% of room so a page number at the edge isn't cut.
 - **Page numbers:** a short number alone near the top or bottom. A small printed number was missed in a
   whole-photo pass, so the top and bottom of the crop are also read up close.
+- **Both pages in one photo:** the fold is looked for in the middle two-fifths of the paper. Lit evenly,
+  it is the darkest column. On two real photos of an open journal lit from one side, the lit page stayed
+  bright right up to the fold and the brightness fell by three quarters within about 1% of the width, while
+  the shaded page brightened only slowly; the darkest column was 3% inside the shaded page, and the split
+  cut off the first letters of its lines. So when one side of the valley climbs at least three times faster
+  than the other, the fold is at the foot of the fast climb. The split is then nudged (up to 1.5%) to where
+  Vision's lines cross it least. With no shadow, the clearest gap in the writing near the middle is used.
+  Both page numbers are looked for; when they don't follow on, the one with more digits wins, since on one
+  real photo a printed page number with a faint last digit read as two digits.
+- **Which way up:** both real two-page photos were taken with the phone upright, so the pages lay
+  sideways. Reading the photo at each quarter turn and keeping the one Vision read most confidently was
+  tried first and failed: Vision reads sideways and upside-down handwriting by itself, so all four scored
+  alike, and it chose upside down for one photo. Instead, Vision reads the photo once, and each line it
+  finds runs along the writing: each long line votes for the quarter turn that levels it, and what's left in
+  the winning lines is the tilt (about 1.8° on one photo). Both photos came out upright. A photo of both
+  pages is levelled by that tilt so the split line follows the fold; a single page is left to flattening.
 - **Straightening by hand:** the Straighten slider turns the crop frame over a still photo instead of turning
   the photo. The first version decoded the full photo (up to 2400 px), turned it, and drew a new preview at
   every step of the slider, without cancelling the step before, and in Result view also re-cropped and
@@ -237,6 +253,7 @@ Not started. Listed so they aren't forgotten.
 ## Known issues
 
 - **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame, removing
-  and restoring words in the reading window, Resume on This Mac after quitting, the word outline, and the ink
-  tint. They pass `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked
+  and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink
+  tint, adding both pages from one photo, and dropping several photos at once. They pass
+  `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked
   with the real model (`--local`), but none has been used in the app itself yet.

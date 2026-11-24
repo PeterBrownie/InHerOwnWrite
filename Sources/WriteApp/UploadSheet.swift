@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 import WriteCore
 
 /// The upload screen: add a photo, fit the crop to the page, then choose the journal and page number.
-/// With no journals yet, it asks only for the first journal's name until one exists.
+/// With no journals yet, it asks only for the first journal's name until one exists. A photo can hold one
+/// page or both pages of the open journal; both are split at the fold and saved as two pages. Several
+/// photos dropped at once are shown one after another, in the order they were taken.
 public struct UploadSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -16,10 +18,23 @@ public struct UploadSheet: View {
     @ViewState private var jpeg: Data?
     @ViewState private var preview: NSImage?
     @ViewState private var crop = PageScanResult.whole.crop
+    /// What the first look found, as a frame over the photo as shown, for Reset Crop.
     @ViewState private var suggestion: PageScanResult?
     @AppStorage("flattenPages") private var flattenPages = true
+    /// Whether photos show both pages of the open journal, to be split at the fold.
+    @AppStorage("bothPages") private var bothPages = false
+    /// Where the fold divides the crop, as a fraction of its width, when the photo shows both pages.
+    @ViewState private var split = 0.5
+    @ViewState private var spreadSuggestion: SpreadScanResult?
+    /// The way up and tilt the first look found for this photo.
+    @ViewState private var orientation: PageScan.Orientation?
+    /// Counts looks at the photo, so only the newest one's result is used.
+    @ViewState private var scanCount = 0
+    /// Photos dropped together that are still to come, in the order they were taken.
+    @ViewState private var queue: [URL] = []
+    @ViewState private var batchSize = 0
     @ViewState private var showResult = false
-    @ViewState private var result: NSImage?
+    @ViewState private var results: [NSImage] = []
     @ViewState private var isProcessing = false
     /// Quarter turns clockwise, for photos taken sideways or upside down.
     @ViewState private var quarterTurns = 0
@@ -51,13 +66,22 @@ public struct UploadSheet: View {
         Int(numberText).flatMap { (1...Vault.maximumPageNumber).contains($0) ? $0 : nil }
     }
 
-    private var isTaken: Bool {
-        guard let journalID, let number else { return false }
-        return model.isPageTaken(journalID: journalID, number: number)
+    /// The page numbers this photo will be saved as: one, or two for both pages.
+    private var numbers: [Int] {
+        guard let number else { return [] }
+        return bothPages ? [number, number + 1] : [number]
     }
+
+    private var takenNumbers: [Int] {
+        guard let journalID else { return [] }
+        return numbers.filter { model.isPageTaken(journalID: journalID, number: $0) }
+    }
+
+    private var isTaken: Bool { !takenNumbers.isEmpty }
 
     private var canSave: Bool {
         journalID != nil && number != nil && jpeg != nil && !isPreparing
+            && numbers.allSatisfy { $0 <= Vault.maximumPageNumber }
     }
 
     private var needsFirstJournal: Bool { model.journals.isEmpty }
@@ -82,17 +106,19 @@ public struct UploadSheet: View {
             if let preloaded, jpeg == nil { show(preloaded) }
         }
         .task { await Task.detached(priority: .utility) { await PageScan.warmUp() }.value }
-        .fileImporter(isPresented: $isChoosingFile, allowedContentTypes: [.image]) { result in
-            if case .success(let url) = result { load(url) }
+        .fileImporter(isPresented: $isChoosingFile, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { start(urls) }
         }
         .confirmationDialog(
-            "Replace page \(numberText)?",
+            takenNumbers.count > 1 ? "Replace pages \(takenNumbers[0]) and \(takenNumbers[1])?"
+                : "Replace page \(takenNumbers.first.map(String.init) ?? numberText)?",
             isPresented: $confirmReplace,
             titleVisibility: .visible
         ) {
             Button("Replace Page", role: .destructive) { save(replacing: true) }
         } message: {
-            Text("The saved photo and text for this page will be permanently removed.")
+            Text(takenNumbers.count > 1 ? "The saved photos and text for these pages will be permanently removed."
+                 : "The saved photo and text for this page will be permanently removed.")
         }
     }
 
@@ -109,15 +135,19 @@ public struct UploadSheet: View {
                 if let preview {
                     if showResult {
                         Group {
-                            if let result, !isProcessing {
-                                Image(nsImage: result).resizable().scaledToFit()
+                            if !results.isEmpty, !isProcessing {
+                                HStack(spacing: 6) {
+                                    ForEach(results.indices, id: \.self) { index in
+                                        Image(nsImage: results[index]).resizable().scaledToFit()
+                                    }
+                                }
                             } else {
                                 ProgressView("Preparing the page…")
                             }
                         }
                         .padding(10)
                     } else {
-                        CropEditor(image: turned ?? preview, crop: $crop, angle: straighten)
+                        CropEditor(image: turned ?? preview, crop: $crop, angle: straighten, split: bothPages ? $split : nil)
                             .padding(10)
                     }
                 } else if isPreparing {
@@ -127,18 +157,19 @@ public struct UploadSheet: View {
                         Image(systemName: "photo.badge.plus")
                             .font(.system(size: 34, weight: .light))
                             .foregroundStyle(Theme.accent)
-                        Text("Drop a photo of the page here")
+                        Text(bothPages ? "Drop a photo of both pages here" : "Drop a photo of the page here")
                             .font(.system(size: 15, design: .serif))
-                        Button("Choose Photo…") { isChoosingFile = true }
+                        Text("Drop several to add them in the order they were taken.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Choose Photos…") { isChoosingFile = true }
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .dropDestination(for: URL.self) { urls, _ in
-                guard let url = urls.first else { return false }
-                load(url)
-                return true
+                start(urls)
             } isTargeted: { isDropTargeted = $0 }
 
             if preview != nil {
@@ -169,13 +200,19 @@ public struct UploadSheet: View {
                 .onChange(of: showResult) { refreshResult() }
                 .onChange(of: flattenPages) { refreshResult() }
                 .onChange(of: crop) { if showResult { refreshResult() } }
+                .onChange(of: split) { if showResult && bothPages { refreshResult() } }
                 .onChange(of: straighten) { refreshResult(after: 0.25) }
                 HStack(spacing: 10) {
                     Toggle("Flatten curved pages", isOn: $flattenPages)
                         .toggleStyle(.checkbox)
                         .help("Straightens lines of writing that bend toward the fold or slope across the photo")
                     Spacer()
-                    if let suggestion, crop != suggestion.crop {
+                    if bothPages, let spreadSuggestion, crop != spreadSuggestion.crop || split != spreadSuggestion.split {
+                        Button("Reset Crop") {
+                            crop = spreadSuggestion.crop
+                            split = spreadSuggestion.split
+                        }
+                    } else if !bothPages, let suggestion, crop != suggestion.crop {
                         Button("Reset Crop") { crop = suggestion.crop }
                     }
                     if crop != PageScanResult.whole.crop {
@@ -193,11 +230,22 @@ public struct UploadSheet: View {
                         ProgressView().controlSize(.small)
                         Text("Finding the page…").font(.caption).foregroundStyle(.secondary)
                     } else {
-                        Text("Drag the edges so only this page is bright.")
+                        Text(bothPages ? "Drag the edges around both pages, and the line onto the fold."
+                             : "Drag the edges so only this page is bright.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if batchSize > 1 {
+                        Text("Photo \(batchSize - queue.count) of \(batchSize)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        if !queue.isEmpty {
+                            Button("Skip") { advance() }
+                                .controlSize(.small)
+                                .help("Leave this photo out and go to the next one")
+                        }
+                    }
                 }
             }
         }
@@ -256,7 +304,18 @@ public struct UploadSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Page number").font(.subheadline.weight(.medium))
+                Text("Photo shows").font(.subheadline.weight(.medium))
+                Picker("Photo shows", selection: $bothPages) {
+                    Text("One page").tag(false)
+                    Text("Both pages").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: bothPages) { modeChanged() }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(bothPages ? "Left page number" : "Page number").font(.subheadline.weight(.medium))
                 HStack {
                     TextField("1", text: numberBinding)
                         .textFieldStyle(.roundedBorder)
@@ -264,13 +323,22 @@ public struct UploadSheet: View {
                     Stepper("Page number", value: stepperBinding, in: 1...Vault.maximumPageNumber)
                         .labelsHidden()
                 }
-                if let found = suggestion?.pageNumber, !numberWasTyped, number == found {
+                if let found = foundNumber, !numberWasTyped, number == found {
                     Label("Read from the photo.", systemImage: "text.viewfinder")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if bothPages, let number {
+                    Text(number < Vault.maximumPageNumber ? "The right page is saved as page \(number + 1)."
+                         : "Page numbers run to \(Vault.maximumPageNumber), so there's no room for the right page.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if isTaken {
-                    Label("Already saved. Saving will ask before replacing it.", systemImage: "exclamationmark.triangle")
+                    Label(takenNumbers.count > 1 ? "Both already saved. Saving will ask before replacing them."
+                          : bothPages ? "Page \(takenNumbers[0]) is already saved. Saving will ask before replacing it."
+                          : "Already saved. Saving will ask before replacing it.", systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(Theme.highlight)
                         .fixedSize(horizontal: false, vertical: true)
@@ -377,8 +445,13 @@ public struct UploadSheet: View {
         suggestNumber()
     }
 
+    /// The page number read from the photo; for both pages, the left page's.
+    private var foundNumber: Int? {
+        bothPages ? spreadSuggestion?.leftPageNumber : suggestion?.pageNumber
+    }
+
     private func suggestNumber() {
-        if let found = suggestion?.pageNumber, (1...Vault.maximumPageNumber).contains(found) {
+        if let found = foundNumber, (1...Vault.maximumPageNumber).contains(found) {
             numberText = String(found)
             return
         }
@@ -394,19 +467,55 @@ public struct UploadSheet: View {
         if !numberWasTyped { suggestNumber() }
     }
 
-    private func load(_ url: URL) {
-        problem = nil
+    /// Starts on photos dropped or chosen together, in the order they were taken.
+    @discardableResult
+    private func start(_ urls: [URL]) -> Bool {
+        let photos = PagePhoto.sortedByDate(urls.filter { url in
+            UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) ?? false
+        })
+        guard let first = photos.first else {
+            problem = urls.isEmpty ? nil : "Those files aren't photos."
+            return false
+        }
         savedMessage = nil
-        isPreparing = true
-        preview = nil
+        queue = Array(photos.dropFirst())
+        batchSize = photos.count
+        load(first)
+        return true
+    }
+
+    /// Goes on to the next photo of a batch, or clears the photo when there is none.
+    private func advance() {
+        if queue.isEmpty {
+            clearPhoto()
+            batchSize = 0
+        } else {
+            load(queue.removeFirst())
+        }
+    }
+
+    private func clearPhoto() {
+        scanCount += 1
+        resultTask?.cancel()
         jpeg = nil
+        preview = nil
         suggestion = nil
-        result = nil
+        spreadSuggestion = nil
+        orientation = nil
+        results = []
         showResult = false
         quarterTurns = 0
         straighten = 0
+        split = 0.5
         turned = nil
         crop = PageScanResult.whole.crop
+        isScanning = false
+    }
+
+    private func load(_ url: URL) {
+        problem = nil
+        clearPhoto()
+        isPreparing = true
         Task {
             do {
                 let prepared = try await Task.detached(priority: .userInitiated) { () -> Data in
@@ -416,27 +525,91 @@ public struct UploadSheet: View {
                 }.value
                 show(prepared)
             } catch {
-                problem = error.localizedDescription
+                problem = "\(url.lastPathComponent): \(error.localizedDescription)"
                 isPreparing = false
                 isScanning = false
             }
         }
     }
 
-    /// Shows a prepared photo and looks for the page in it.
+    /// Shows a prepared photo, turns it upright, and looks for the page in it.
     private func show(_ prepared: Data) {
         jpeg = prepared
         preview = NSImage(data: prepared)
         isPreparing = false
+        findPages(reorient: true)
+    }
+
+    /// Switching between one page and both looks again. Both pages are levelled along with the fold, so the
+    /// split line follows it; one page is flattened instead, so a tilt found for it isn't applied.
+    private func modeChanged() {
+        if bothPages, straighten == 0, let tilt = orientation?.tilt { straighten = (tilt * 2).rounded() / 2 }
+        findPages(reorient: false)
+    }
+
+    /// The photo's width over its height after `turns` quarter turns.
+    private func aspect(afterTurns turns: Int) -> Double {
+        let size = preview?.size ?? CGSize(width: 1, height: 1)
+        let width = turns % 2 == 1 ? size.height : size.width, height = turns % 2 == 1 ? size.width : size.height
+        return height > 0 ? width / height : 1
+    }
+
+    /// Looks for the page, or both pages, on the photo as turned. With `reorient`, a new photo is first
+    /// turned the way its writing reads.
+    private func findPages(reorient: Bool) {
+        guard let jpeg else { return }
+        scanCount += 1
+        let count = scanCount, spread = bothPages
+        let turns = quarterTurns, tilt = straighten
         isScanning = true
         Task {
-            let found = await PageScan.analyze(jpeg: prepared)
-            // Another photo may have been chosen meanwhile.
-            guard jpeg == prepared else { return }
-            suggestion = found
-            crop = found.crop
+            let found = await Task.detached(priority: .userInitiated) {
+                () -> (PageScan.Orientation, PageScan.Orientation, PageScanResult?, SpreadScanResult?) in
+                var seen = PageScan.Orientation(quarterTurns: turns, tilt: tilt)
+                var way = seen
+                if reorient {
+                    seen = await PageScan.orientation(jpeg: jpeg)
+                    // The slider moves in half degrees.
+                    way = PageScan.Orientation(quarterTurns: seen.quarterTurns,
+                                               tilt: spread ? (seen.tilt * 2).rounded() / 2 : 0)
+                }
+                let degrees = Double(way.quarterTurns) * 90 + way.tilt
+                guard let upright = try? PagePhoto.rotated(jpeg, degrees: degrees) else { return (seen, way, nil, nil) }
+                if spread { return (seen, way, nil, await PageScan.analyzeSpread(jpeg: upright)) }
+                return (seen, way, await PageScan.analyze(jpeg: upright), nil)
+            }.value
+            guard count == scanCount, self.jpeg == jpeg else { return }
+            let (seen, way, page, pages) = found
             isScanning = false
+            if reorient { orientation = seen }
+            if way.quarterTurns != quarterTurns {
+                quarterTurns = way.quarterTurns
+                refreshTurned()
+            }
+            straighten = way.tilt
+            // The look was at the levelled photo; the editor turns its frame over the photo instead.
+            let aspect = aspect(afterTurns: way.quarterTurns)
+            func frame(_ found: CGRect) -> CGRect {
+                TiltedCrop.fitted(TiltedCrop.photoCrop(found, degrees: way.tilt, aspect: aspect), degrees: way.tilt, aspect: aspect)
+            }
+            if var page {
+                page.crop = frame(page.crop)
+                suggestion = page
+                crop = page.crop
+            }
+            if var pages {
+                // Fitting the frame inside the photo can shrink it; the split stays on the fold.
+                let fold = pages.crop.minX + pages.crop.width * pages.split
+                pages.crop = frame(pages.crop)
+                let kept = TiltedCrop.canvasCrop(pages.crop, degrees: way.tilt, aspect: aspect)
+                pages.split = min(max((fold - kept.minX) / max(kept.width, 1e-9), SpreadScanResult.splitLimits.lowerBound),
+                                  SpreadScanResult.splitLimits.upperBound)
+                spreadSuggestion = pages
+                crop = pages.crop
+                split = pages.split
+            }
             if !numberWasTyped { suggestNumber() }
+            if showResult { refreshResult() }
         }
     }
 
@@ -445,13 +618,16 @@ public struct UploadSheet: View {
     /// The crop as it will be cut: the turned frame, fitted inside the photo, as an upright crop of the photo
     /// once it has been turned by `rotation`.
     private var savedCrop: CGRect {
-        // The photo's shape after its quarter turns, known even before the turned copy is drawn.
-        let size = preview?.size ?? CGSize(width: 1, height: 1)
-        let sideways = quarterTurns % 2 == 1
-        let width = sideways ? size.height : size.width, height = sideways ? size.width : size.height
-        let aspect = height > 0 ? width / height : 1
+        let aspect = aspect(afterTurns: quarterTurns)
         let frame = TiltedCrop.fitted(crop, degrees: straighten, aspect: aspect)
         return TiltedCrop.canvasCrop(frame, degrees: straighten, aspect: aspect)
+    }
+
+    /// What will be cut from the turned photo: the page, or the left and right pages.
+    private var savedCrops: [CGRect] {
+        guard bothPages else { return [savedCrop] }
+        let (left, right) = SpreadScanResult.halves(of: savedCrop, split: split)
+        return [left, right]
     }
 
     /// Crops and flattens off the main thread for the Result view. `delay` lets a slider settle first; a newer
@@ -460,19 +636,19 @@ public struct UploadSheet: View {
         resultTask?.cancel()
         guard showResult, let jpeg else { return }
         isProcessing = true
-        let crop = savedCrop, flatten = flattenPages, rotation = rotation
+        let crops = savedCrops, flatten = flattenPages, rotation = rotation
         resultTask = Task {
             if delay > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
             guard !Task.isCancelled else { return }
             let processed = await Task.detached(priority: .userInitiated) {
-                try? PageFlattener.process(jpeg, crop: crop, flatten: flatten, rotation: rotation)
+                crops.compactMap { try? PageFlattener.process(jpeg, crop: $0, flatten: flatten, rotation: rotation) }
             }.value
             // Only the newest request counts.
-            guard !Task.isCancelled, self.jpeg == jpeg, self.savedCrop == crop, self.flattenPages == flatten,
+            guard !Task.isCancelled, self.jpeg == jpeg, self.savedCrops == crops, self.flattenPages == flatten,
                   self.rotation == rotation else { return }
-            result = processed.flatMap(NSImage.init(data:))
+            results = processed.compactMap(NSImage.init(data:))
             isProcessing = false
         }
     }
@@ -503,79 +679,68 @@ public struct UploadSheet: View {
     /// A quarter turn carries the crop around with the photo, then looks for the page again, since a
     /// sideways photo hides it from the first look.
     private func turn(by quarters: Int) {
-        guard let jpeg else { return }
+        guard jpeg != nil else { return }
         quarterTurns = (quarterTurns + quarters + 4) % 4
         crop = PagePhoto.rotatedCrop(crop, quarters: quarters)
         refreshTurned()
-        // The page is looked for on the photo as turned by quarters; the straightening frame turns over that.
-        let rotation = Double(quarterTurns) * 90
-        isScanning = true
-        Task {
-            let found = await Task.detached(priority: .userInitiated) { () -> PageScanResult? in
-                guard let turnedJPEG = try? PagePhoto.rotated(jpeg, degrees: rotation) else { return nil }
-                return await PageScan.analyze(jpeg: turnedJPEG)
-            }.value
-            guard self.jpeg == jpeg, Double(self.quarterTurns) * 90 == rotation else { return }
-            isScanning = false
-            if let found {
-                suggestion = found
-                crop = found.crop
-                if !numberWasTyped { suggestNumber() }
-            }
-        }
+        findPages(reorient: false)
     }
 
     private func save(replacing: Bool) {
-        guard let journalID, let number, let jpeg else { return }
-        let page: Data
+        guard let journalID, let jpeg, !numbers.isEmpty else { return }
+        let pages: [Data]
         do {
-            page = try PageFlattener.process(jpeg, crop: savedCrop, flatten: flattenPages, rotation: rotation)
+            pages = try savedCrops.map {
+                try PageFlattener.process(jpeg, crop: $0, flatten: flattenPages, rotation: rotation)
+            }
         } catch {
             problem = error.localizedDescription
             return
         }
-        guard model.addPage(journalID: journalID, number: number, jpeg: page, replacing: replacing,
-                            readLocally: model.readsLocally) else {
-            problem = model.errorMessage
-            model.errorMessage = nil
-            return
+        let numbers = numbers
+        for (number, page) in zip(numbers, pages) {
+            let replace = replacing && model.isPageTaken(journalID: journalID, number: number)
+            guard model.addPage(journalID: journalID, number: number, jpeg: page, replacing: replace,
+                                readLocally: model.readsLocally) else {
+                problem = model.errorMessage
+                model.errorMessage = nil
+                return
+            }
         }
+        let saved = numbers.count > 1 ? "Pages \(numbers[0]) and \(numbers[1])" : "Page \(numbers[0])"
+        advance()
         problem = nil
         savedMessage = model.readsLocally
-            ? "Page \(number) saved and being read on this Mac."
+            ? "\(saved) saved and being read on this Mac."
             : model.hasAPIKey
-            ? "Page \(number) saved and being read."
-            : "Page \(number) saved. Add an API key to read it."
-        self.jpeg = nil
-        preview = nil
-        suggestion = nil
-        result = nil
-        showResult = false
-        quarterTurns = 0
-        straighten = 0
-        turned = nil
-        crop = PageScanResult.whole.crop
+            ? "\(saved) saved and being read."
+            : "\(saved) saved. Add an API key to read \(numbers.count > 1 ? "them" : "it")."
         numberWasTyped = false
-        numberText = String(min(number + 1, Vault.maximumPageNumber))
+        numberText = String(min((numbers.last ?? 0) + 1, Vault.maximumPageNumber))
     }
 }
 
 /// The photo with the part to keep left bright and everything else darkened. Drag an edge or corner to
 /// adjust it, or drag inside to move it. With a straightening angle, the photo stays still and the frame
 /// turns over it, so the slider costs nothing to drag; edges then move along the frame's own sides.
+/// For a photo of both pages, a line across the frame marks the fold; drag it to move the split.
 public struct CropEditor: View {
     let image: NSImage
     @Binding var crop: CGRect
     /// The clockwise turn, in degrees, that will level the page. The frame is drawn turned the other way.
     let angle: Double
+    /// Where the fold divides the frame, as a fraction of its width; nil for a single page.
+    let split: Binding<Double>?
 
-    public init(image: NSImage, crop: Binding<CGRect>, angle: Double = 0) {
+    public init(image: NSImage, crop: Binding<CGRect>, angle: Double = 0, split: Binding<Double>? = nil) {
         self.image = image
         _crop = crop
         self.angle = angle
+        self.split = split
     }
 
     @ViewState private var dragStart: CGRect?
+    @ViewState private var splitStart: Double?
 
     /// The middle comes first so the edge and corner handles sit above it and get their drags.
     private enum Handle: CaseIterable {
@@ -613,8 +778,49 @@ public struct CropEditor: View {
                 ForEach(Handle.allCases, id: \.self) { handle in
                     handleView(handle, keep: keep, corners: corners, frame: frame)
                 }
+                if let split {
+                    splitView(split, corners: corners, keep: keep)
+                }
             }
         }
+    }
+
+    /// The fold line and its handle. Dragging moves it along the frame's own width.
+    @ViewBuilder
+    private func splitView(_ split: Binding<Double>, corners: [CGPoint], keep: CGRect) -> some View {
+        let fraction = split.wrappedValue
+        let top = Self.between(corners[0], corners[1], fraction), bottom = Self.between(corners[3], corners[2], fraction)
+        let middle = CGPoint(x: (top.x + bottom.x) / 2, y: (top.y + bottom.y) / 2)
+        let frameWidth = hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y)
+        Path { path in
+            path.move(to: top)
+            path.addLine(to: bottom)
+        }
+        .stroke(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [7, 4]))
+        .shadow(color: .black.opacity(0.5), radius: 1)
+        .allowsHitTesting(false)
+        Capsule()
+            .fill(Color.white)
+            .frame(width: 8, height: 34)
+            .shadow(color: .black.opacity(0.5), radius: 1.5)
+            .frame(width: 22, height: max(keep.height - 64, 40))
+            .contentShape(Rectangle())
+            .rotationEffect(.degrees(-angle))
+            .position(middle)
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let start = splitStart ?? fraction
+                        if splitStart == nil { splitStart = start }
+                        let radians = angle * .pi / 180
+                        let moved = value.translation.width * cos(radians) - value.translation.height * sin(radians)
+                        split.wrappedValue = min(max(start + moved / max(frameWidth, 1), SpreadScanResult.splitLimits.lowerBound),
+                                                 SpreadScanResult.splitLimits.upperBound)
+                    }
+                    .onEnded { _ in splitStart = nil }
+            )
+            .pointerStyle(.columnResize)
+            .help("Drag onto the fold between the pages")
     }
 
     private func fitted(in size: CGSize) -> CGRect {
@@ -660,12 +866,37 @@ public struct CropEditor: View {
                     if dragStart == nil { dragStart = start }
                     // In units of the photo's height, the same along both axes.
                     let unit = max(frame.height, 1)
-                    crop = adjusted(start, handle: handle,
-                                    dx: value.translation.width / unit, dy: value.translation.height / unit)
+                    if let split, handle != .middle, splitStart == nil { splitStart = split.wrappedValue }
+                    let moved = adjusted(start, handle: handle,
+                                         dx: value.translation.width / unit, dy: value.translation.height / unit)
+                    crop = moved
+                    if let split, let splitStart, handle != .middle {
+                        split.wrappedValue = keptFold(splitStart, from: start, to: moved)
+                    }
                 }
-                .onEnded { _ in dragStart = nil }
+                .onEnded { _ in
+                    dragStart = nil
+                    splitStart = nil
+                }
         )
         .pointerStyle(pointer(for: handle))
+    }
+
+    private static func between(_ a: CGPoint, _ b: CGPoint, _ fraction: Double) -> CGPoint {
+        CGPoint(x: a.x + (b.x - a.x) * fraction, y: a.y + (b.y - a.y) * fraction)
+    }
+
+    /// The split that keeps the fold line where it was on the photo when an edge moves the frame from
+    /// `start` to `moved`, both at the same angle.
+    private func keptFold(_ fraction: Double, from start: CGRect, to moved: CGRect) -> Double {
+        let radians = angle * .pi / 180
+        // How far the frame's middle moved along its own width, in units of the photo's height.
+        let dx = (moved.midX - start.midX) * aspect, dy = moved.midY - start.midY
+        let shift = dx * cos(radians) - dy * sin(radians)
+        let fold = (fraction - 0.5) * start.width * aspect
+        let width = max(moved.width * aspect, 1e-9)
+        return min(max((fold - shift) / width + 0.5, SpreadScanResult.splitLimits.lowerBound),
+                   SpreadScanResult.splitLimits.upperBound)
     }
 
     private func position(of handle: Handle, corners: [CGPoint]) -> CGPoint {

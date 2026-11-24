@@ -20,6 +20,47 @@ public struct PageScanResult: Sendable, Equatable {
     public static let whole = PageScanResult(crop: CGRect(x: 0, y: 0, width: 1, height: 1))
 }
 
+/// What a first look at a photo of both pages of an open journal finds: the two pages together, and where
+/// the fold divides them.
+public struct SpreadScanResult: Sendable, Equatable {
+    /// Both pages, normalized to the photo with the origin at the top left.
+    public var crop: CGRect
+    /// Where the fold falls across `crop`, as a fraction of its width from the left.
+    public var split: Double
+    public var leftNumber: Int?
+    public var rightNumber: Int?
+
+    public init(crop: CGRect, split: Double, leftNumber: Int? = nil, rightNumber: Int? = nil) {
+        self.crop = crop
+        self.split = split
+        self.leftNumber = leftNumber
+        self.rightNumber = rightNumber
+    }
+
+    public static let whole = SpreadScanResult(crop: CGRect(x: 0, y: 0, width: 1, height: 1), split: 0.5)
+
+    /// The left page's number: as read, or one before the right page's. When both were read but they don't
+    /// follow on, the one with more digits wins, since a smudged digit is lost far more often than one is
+    /// added (a printed "240" with a faint 0 reads as "24").
+    public var leftPageNumber: Int? {
+        let fromRight = rightNumber.flatMap { $0 > 1 ? $0 - 1 : nil }
+        guard let leftNumber else { return fromRight }
+        guard let rightNumber, let fromRight, rightNumber != leftNumber + 1 else { return leftNumber }
+        return String(rightNumber).count > String(leftNumber).count ? fromRight : leftNumber
+    }
+
+    /// The split can't come closer than this to either side of the crop.
+    public static let splitLimits = 0.15...0.85
+
+    /// The left and right pages of an upright crop divided at `split`, a fraction of its width.
+    public static func halves(of crop: CGRect, split: Double) -> (left: CGRect, right: CGRect) {
+        let split = min(max(split, splitLimits.lowerBound), splitLimits.upperBound)
+        let leftWidth = crop.width * split
+        return (CGRect(x: crop.minX, y: crop.minY, width: leftWidth, height: crop.height),
+                CGRect(x: crop.minX + leftWidth, y: crop.minY, width: crop.width - leftWidth, height: crop.height))
+    }
+}
+
 /// A line of text Vision found, in top-left normalized coordinates.
 struct FoundText: Sendable {
     let text: String
@@ -42,6 +83,69 @@ public enum PageScan {
         request.recognitionLevel = .accurate
         _ = try? await request.perform(on: image)
     }
+    /// Which way up a photo reads best, and how far its writing slants once turned that way.
+    public struct Orientation: Sendable, Equatable {
+        /// Quarter turns clockwise that put the writing upright.
+        public var quarterTurns: Int
+        /// Degrees clockwise that then level the writing.
+        public var tilt: Double
+
+        public init(quarterTurns: Int, tilt: Double) {
+            self.quarterTurns = quarterTurns
+            self.tilt = tilt
+        }
+
+        public static let upright = Orientation(quarterTurns: 0, tilt: 0)
+    }
+
+    public static func orientation(jpeg: Data) async -> Orientation {
+        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return .upright }
+        return await orientation(of: image)
+    }
+
+    /// Which way the writing runs. Vision reads sideways and upside-down handwriting by itself, and each line
+    /// it finds runs along the writing, so one look at the photo as it is tells which way is up: each long
+    /// line votes for the quarter turn closest to leveling it, and what's left over in the winning lines is
+    /// the tilt. Reading the photo each way up and comparing confidence was tried first; Vision read all four
+    /// ways nearly as well, and it chose upside down for one of two real photos.
+    public static func orientation(of image: CGImage) async -> Orientation {
+        // A smaller copy is plenty to see which way lines run.
+        let scale = min(1, 1400 / Double(max(image.width, image.height)))
+        let small = scale < 1 ? PagePhoto.scaled(image, by: scale) ?? image : image
+        var request = RecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        guard let observations = try? await request.perform(on: small) else { return .upright }
+        return orientation(ofLines: observations.map { ($0.bottomLeft.cgPoint, $0.bottomRight.cgPoint) },
+                           width: Double(small.width), height: Double(small.height))
+    }
+
+    /// The quarter turn and tilt from lines' baselines, as start and end points normalized to the photo with
+    /// the origin at the bottom left (as Vision gives them).
+    public static func orientation(ofLines lines: [(start: CGPoint, end: CGPoint)], width: Double, height: Double) -> Orientation {
+        // Counterclockwise angles, in degrees, of lines long enough to show their direction.
+        let angles = lines.compactMap { line -> Double? in
+            let dx = (line.end.x - line.start.x) * width, dy = (line.end.y - line.start.y) * height
+            guard hypot(dx, dy) > min(width, height) * 0.2 else { return nil }
+            return atan2(dy, dx) * 180 / .pi
+        }
+        // A line running at angle a is leveled by turning the photo clockwise by a.
+        let votes = Dictionary(grouping: angles) { (((Int(($0 / 90).rounded()) % 4) + 4) % 4) }
+        guard let (turns, chosen) = votes.max(by: { $0.value.count < $1.value.count }), chosen.count >= 3 else {
+            return .upright
+        }
+        let leftover = chosen.map { angle -> Double in
+            var rest = (angle - Double(turns) * 90).truncatingRemainder(dividingBy: 360)
+            if rest > 180 { rest -= 360 }
+            if rest < -180 { rest += 360 }
+            return rest
+        }.sorted()
+        let tilt = leftover[leftover.count / 2]
+        return Orientation(quarterTurns: turns, tilt: abs(tilt) <= 15 ? tilt : 0)
+    }
+
     public static func analyze(jpeg: Data) async -> PageScanResult {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -65,6 +169,92 @@ public enum PageScan {
             crop = crop.union(closer.box.insetBy(dx: -0.01, dy: -0.01)).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         }
         return PageScanResult(crop: crop, pageNumber: number?.value, pageNumberBox: number?.box)
+    }
+
+    public static func analyzeSpread(jpeg: Data) async -> SpreadScanResult {
+        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return .whole }
+        return (try? await analyzeSpread(image: image)) ?? .whole
+    }
+
+    /// Both pages of an open journal: the paper of both, split at the fold, with each page's number.
+    public static func analyzeSpread(image: CGImage) async throws -> SpreadScanResult {
+        var request = RecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        let found = try await request.perform(on: image).compactMap { observation -> FoundText? in
+            guard let text = observation.topCandidates(1).first?.string else { return nil }
+            return FoundText(text: text, box: PageLayoutFinder.topLeft(observation.boundingBox.cgRect))
+        }
+        let paper = PaperMap(image: image)
+        var spread = spreadCrop(text: found, paper: paper)
+        let fold = spread.crop.minX + spread.crop.width * spread.split
+        let (left, right) = SpreadScanResult.halves(of: spread.crop, split: spread.split)
+
+        var boxes: [CGRect] = []
+        func number(on side: CGRect) async throws -> Int? {
+            let text = found.filter { side.contains(CGPoint(x: $0.box.midX, y: $0.box.midY)) }
+            var number = PageNumberFinder.find(in: text)
+            if number == nil { number = try await PageNumberFinder.lookCloser(in: image, crop: side) }
+            if let number { boxes.append(number.box) }
+            return number?.value
+        }
+        spread.leftNumber = try await number(on: left)
+        spread.rightNumber = try await number(on: right)
+        // A page number at the very edge stays inside, and the split stays at the fold.
+        for box in boxes {
+            spread.crop = spread.crop.union(box.insetBy(dx: -0.01, dy: -0.01))
+                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        spread.split = (fold - spread.crop.minX) / max(spread.crop.width, 1e-9)
+        return spread
+    }
+
+    /// Both pages' paper, and the fold between them: a shadowed valley in brightness near the middle of the
+    /// paper, or failing that, the clearest gap in the writing there.
+    static func spreadCrop(text: [FoundText], paper: PaperMap?) -> SpreadScanResult {
+        let room = 0.02
+        let profile = paper?.columnProfile()
+        let span = profile?.paper ?? 0...1
+        let width = span.upperBound - span.lowerBound, middle = span.lowerBound + width / 2
+        var fold = middle
+        if let shadow = paper?.spreadFold(within: span) {
+            // Writing runs right up to the fold, so a nudge keeps the split out of words.
+            fold = writingGap(text: text, within: (shadow - 0.015)...(shadow + 0.015), favoring: shadow) ?? shadow
+        } else if let gap = writingGap(text: text, within: (middle - 0.2 * width)...(middle + 0.2 * width), favoring: middle) {
+            fold = gap
+        }
+        let left = max(0, span.lowerBound - room), right = min(1, span.upperBound + room)
+        var top = 0.0, bottom = 1.0
+        // The pages may sit at different heights; keep all of both.
+        let rows = [paper?.paperRows(from: left, to: fold), paper?.paperRows(from: fold, to: right)].compactMap { $0 }
+        if !rows.isEmpty {
+            top = max(0, (rows.map(\.lowerBound).min() ?? 0) - room)
+            bottom = min(1, (rows.map(\.upperBound).max() ?? 1) + room)
+        }
+        // Vision can miss handwriting, but the writing it did find stays inside.
+        if let writing = text.map(\.box).reduce(nil, { (total: CGRect?, box) in total?.union(box) ?? box }) {
+            top = min(top, max(0, writing.minY - 0.01))
+            bottom = max(bottom, min(1, writing.maxY + 0.01))
+        }
+        let crop = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+        let split = min(max((fold - left) / crop.width, SpreadScanResult.splitLimits.lowerBound),
+                        SpreadScanResult.splitLimits.upperBound)
+        return SpreadScanResult(crop: crop, split: split)
+    }
+
+    /// Where a range across the photo is least covered by writing, nearest `middle` when it's a tie.
+    static func writingGap(text: [FoundText], within range: ClosedRange<Double>, favoring middle: Double) -> Double? {
+        guard !text.isEmpty else { return nil }
+        let positions = (0...120).map { range.lowerBound + (range.upperBound - range.lowerBound) * Double($0) / 120 }
+        func covered(_ x: Double) -> Double {
+            text.reduce(0) { $0 + ($1.box.minX <= x && $1.box.maxX >= x ? $1.box.height : 0) }
+        }
+        return positions.min { a, b in
+            let ca = covered(a), cb = covered(b)
+            return ca != cb ? ca < cb : abs(a - middle) < abs(b - middle)
+        }
     }
 
     /// The page's paper, cut at the fold when the facing page shows. The fold is a shadowed valley in
@@ -255,8 +445,8 @@ struct PaperMap {
         let fold: Double?
     }
 
-    /// Brightness across the photo's middle rows, used to find the paper's edges and the fold.
-    func columnProfile() -> ColumnProfile? {
+    /// The mean brightness of each column across the photo's middle rows, lightly smoothed.
+    private func smoothedColumns() -> [Double]? {
         let rows = (height / 5)..<(height * 4 / 5)
         guard width > 20, !rows.isEmpty else { return nil }
         let raw = (0..<width).map { x -> Double in
@@ -267,6 +457,12 @@ struct PaperMap {
             let window = raw[max(0, x - radius)...min(width - 1, x + radius)]
             return window.reduce(0, +) / Double(window.count)
         }
+        return smooth
+    }
+
+    /// Brightness across the photo's middle rows, used to find the paper's edges and the fold.
+    func columnProfile() -> ColumnProfile? {
+        guard let smooth = smoothedColumns() else { return nil }
         let sorted = smooth.sorted()
         let dark = sorted[sorted.count / 20], light = sorted[sorted.count * 19 / 20]
         var paper = 0.0...1.0
@@ -291,6 +487,56 @@ struct PaperMap {
             if depth > (best?.depth ?? 12) { best = (x, depth) }
         }
         return ColumnProfile(paper: paper, fold: best.map { Double($0.x) / Double(width) })
+    }
+
+    /// The fold of an open journal photographed with both pages: the deepest shadowed valley in the middle
+    /// two-fifths of the paper, with paper on both sides, favoring the middle. Nil when there's no clear one.
+    func spreadFold(within paper: ClosedRange<Double>) -> Double? {
+        guard let smooth = smoothedColumns() else { return nil }
+        let span = paper.upperBound - paper.lowerBound
+        let middle = paper.lowerBound + span / 2
+        let reach = max(3, width * 8 / 100)
+        var best: (x: Int, score: Double)?
+        for x in reach..<(width - reach) {
+            let position = Double(x) / Double(width)
+            let offCenter = abs(position - middle) / span
+            guard offCenter <= 0.2 else { continue }
+            guard smooth[x] <= smooth[x - 1], smooth[x] <= smooth[x + 1] else { continue }
+            let leftPeak = smooth[(x - reach)..<x].max() ?? 0
+            let rightPeak = smooth[(x + 1)...(x + reach)].max() ?? 0
+            let depth = min(leftPeak, rightPeak) - smooth[x]
+            guard depth > 12 else { continue }
+            // A valley off to one side has to be deeper to win.
+            let score = depth * (1 - 2 * offCenter)
+            if score > (best?.score ?? 0) { best = (x, score) }
+        }
+        guard let valley = best?.x else { return nil }
+        return Double(foldInside(valley: valley, smooth: smooth, reach: reach)) / Double(width)
+    }
+
+    /// Where in a valley the fold is. Lit evenly, the fold is the darkest column. Lit from one side, one page
+    /// stays bright right up to the fold and drops sharply into the other page's shadow, which brightens only
+    /// slowly away from the fold; the darkest column is then well inside the shaded page, and the fold is at
+    /// the foot of the sharp drop.
+    private func foldInside(valley: Int, smooth: [Double], reach: Int) -> Int {
+        let floor = smooth[valley]
+        /// How many columns it takes, going one way, to climb from the floor to most of the way to that
+        /// side's brightest, and where the climb starts.
+        func climb(_ step: Int) -> (foot: Int, length: Int)? {
+            let end = valley + step * reach
+            guard end > 0, end < smooth.count - 1 else { return nil }
+            let peak = stride(from: valley, through: end, by: step).map { smooth[$0] }.max() ?? floor
+            guard peak - floor > 12 else { return nil }
+            var foot = valley
+            while foot != end, smooth[foot + step] < floor + 0.2 * (peak - floor) { foot += step }
+            var top = foot
+            while top != end, smooth[top] < floor + 0.8 * (peak - floor) { top += step }
+            return (foot, max(1, abs(top - foot)))
+        }
+        guard let left = climb(-1), let right = climb(1) else { return valley }
+        if left.length * 3 <= right.length { return left.foot }
+        if right.length * 3 <= left.length { return right.foot }
+        return valley
     }
 
     /// The first and last rows, top-left normalized, that are mostly paper between two columns.
@@ -335,6 +581,17 @@ extension PagePhoto {
         context.translateBy(x: Double(newWidth) / 2, y: Double(newHeight) / 2)
         context.rotate(by: radians)
         context.draw(image, in: CGRect(x: -width / 2, y: -height / 2, width: width, height: height))
+        return context.makeImage()
+    }
+
+    /// A smaller copy of an image.
+    static func scaled(_ image: CGImage, by scale: Double) -> CGImage? {
+        let width = max(1, Int(Double(image.width) * scale)), height = max(1, Int(Double(image.height) * scale))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return context.makeImage()
     }
 
@@ -420,6 +677,22 @@ public enum TiltedCrop {
         let centerY = min(max(crop.midY, extentY), 1 - extentY)
         return CGRect(x: (centerX - halfWidth) / aspect, y: centerY - halfHeight,
                       width: 2 * halfWidth / aspect, height: 2 * halfHeight)
+    }
+
+    /// The reverse of `canvasCrop`: an upright crop of the photo turned clockwise by `degrees`, as a frame
+    /// over the still photo.
+    public static func photoCrop(_ canvas: CGRect, degrees: Double, aspect: Double) -> CGRect {
+        guard abs(degrees) > 1e-9 else { return canvas }
+        let (cosine, sine) = turn(degrees)
+        let width = aspect, height = 1.0
+        let canvasWidth = width * abs(cosine) + height * abs(sine)
+        let canvasHeight = width * abs(sine) + height * abs(cosine)
+        let x = canvas.midX * canvasWidth - canvasWidth / 2, y = canvas.midY * canvasHeight - canvasHeight / 2
+        let centerX = width / 2 + x * cosine + y * sine
+        let centerY = height / 2 - x * sine + y * cosine
+        let frameWidth = canvas.width * canvasWidth, frameHeight = canvas.height * canvasHeight
+        return CGRect(x: (centerX - frameWidth / 2) / width, y: (centerY - frameHeight / 2) / height,
+                      width: frameWidth / width, height: frameHeight / height)
     }
 
     /// The same frame as an upright crop of the photo after `PagePhoto.rotated(_:degrees:)` has turned it

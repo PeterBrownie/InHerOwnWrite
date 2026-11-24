@@ -52,7 +52,15 @@ you trust, with two-factor sign-in. The repository's `.gitignore` keeps photos a
 ## Adding a page
 
 Press **+** or ⌘N and drop in a photo. With no journals yet, the sheet first asks for the first
-journal's name.
+journal's name. Drop several photos at once (or choose several) to add them one after another, in the order
+they were taken; **Skip** leaves one out.
+
+- **One page or both.** Under **Photo shows**, choose **Both pages** for a photo of the open journal. The
+  app finds the fold and draws a dashed line on it; drag the line to move the split. Saving makes two pages:
+  the left one gets the page number, the right one the next number. A page number printed on either page
+  fills it in.
+- **Which way up.** A sideways or upside-down photo is turned upright on its own, from the direction the
+  writing runs. With both pages, a slightly tilted photo is also levelled, so the split follows the fold.
 
 - **Crop.** The app finds the page being added and darkens everything else: the table, and any strip of
   the facing page past the fold. Drag the edges or corners to adjust it, or drag inside to move it. Only
@@ -76,7 +84,9 @@ page. A page that can't be read keeps its photo and can be retried.
   Line Breaks (View menu or Settings) shows lines as written; turn it off to read flowing paragraphs. Text
   can be edited either way; with line breaks off, each change is made to the text as written.
 - **Analysis.** Choose journals and page ranges, see top words (hide any you don't want), the names Claude
-  found, and how often any word or name appears over time.
+  found, and how often any word or name appears over time. **Entries** counts the entries, charts them per
+  month or per week, averages both over the whole span from the first dated entry to the last, and shows
+  the longest gap between two entries.
 
 ## Reading on this Mac (experimental)
 

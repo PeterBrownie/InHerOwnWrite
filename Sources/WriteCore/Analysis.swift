@@ -119,6 +119,35 @@ public struct TimelineBin: Identifiable, Hashable, Sendable {
     public let pageCount: Int
 }
 
+/// How often entries were written, from their dates.
+public struct EntryRhythm: Sendable {
+    /// The longest stretch between two entries written on different days.
+    public struct Gap: Sendable, Equatable {
+        public let days: Int
+        public let from: String
+        public let to: String
+
+        public init(days: Int, from: String, to: String) {
+            self.days = days
+            self.from = from
+            self.to = to
+        }
+    }
+
+    public let entryCount: Int
+    public let datedCount: Int
+    /// Every month from the first dated entry to the last, empty ones included.
+    public let byMonth: [TimelineBin]
+    /// Every week, Monday to Sunday, from the first dated entry to the last.
+    public let byWeek: [TimelineBin]
+    /// Dated entries divided by the months, or weeks, from the first to the last; nil with none dated.
+    public let perMonth: Double?
+    public let perWeek: Double?
+    public let longestGap: Gap?
+    public let first: String?
+    public let last: String?
+}
+
 public struct TermResult: Sendable {
     public let display: String
     public let total: Int
@@ -233,6 +262,80 @@ public struct AnalysisSnapshot: Sendable {
             byDate: dateBins(perUnit),
             byPage: pageBins(perUnit)
         )
+    }
+
+    /// Entries per month and per week, the averages over the whole span, and the longest gap. An entry that
+    /// runs over several pages counts once, on its date.
+    public func entryRhythm() -> EntryRhythm {
+        var days: [String: Int] = [:]
+        var pages: [String: Set<UUID>] = [:]
+        for unit in units {
+            pages[unit.entryID, default: []].insert(unit.pageID)
+            if let day = Self.dayNumber(unit) { days[unit.entryID] = day }
+        }
+        let dated = days.map { (entry: $0.key, day: $0.value) }
+        guard let firstDay = dated.map(\.day).min(), let lastDay = dated.map(\.day).max() else {
+            return EntryRhythm(entryCount: entryCount, datedCount: 0, byMonth: [], byWeek: [], perMonth: nil,
+                               perWeek: nil, longestGap: nil, first: nil, last: nil)
+        }
+
+        func bins(index: (Int) -> Int, count: Int, label: (Int) -> (full: String, short: String)) -> [TimelineBin] {
+            var entries = [Int](repeating: 0, count: count)
+            var binPages = [Set<UUID>](repeating: [], count: count)
+            for item in dated {
+                let bin = index(item.day)
+                entries[bin] += 1
+                binPages[bin].formUnion(pages[item.entry] ?? [])
+            }
+            return (0..<count).map { bin in
+                let names = label(bin)
+                return TimelineBin(id: bin, label: names.full, shortLabel: names.short, count: entries[bin],
+                                   pageCount: binPages[bin].count)
+            }
+        }
+
+        let origin = Self.components(day: firstDay)
+        let originMonth = origin.year * 12 + origin.month - 1
+        let month = { (day: Int) -> Int in
+            let date = Self.components(day: day)
+            return date.year * 12 + date.month - 1 - originMonth
+        }
+        let months = month(lastDay) + 1
+        let byMonth = bins(index: month, count: months) { index in
+            let total = originMonth + index
+            let name = Self.shortMonths[total % 12]
+            return ("\(name) \(total / 12)", "\(name) \(String(total / 12).suffix(2))")
+        }
+
+        // Day 0, January 1, 1970, was a Thursday, so weeks counted from day -3 start on Mondays.
+        let week = { (day: Int) -> Int in Int((Double(day + 3) / 7).rounded(.down)) }
+        let firstWeek = week(firstDay)
+        let weeks = week(lastDay) - firstWeek + 1
+        let byWeek = bins(index: { week($0) - firstWeek }, count: weeks) { index in
+            let monday = (firstWeek + index) * 7 - 3
+            return ("Week of \(Self.label(day: monday))", Self.label(day: monday, withYear: false))
+        }
+
+        let distinct = Array(Set(dated.map(\.day))).sorted()
+        let gap = zip(distinct, distinct.dropFirst()).max { ($0.1 - $0.0) < ($1.1 - $1.0) }
+        return EntryRhythm(
+            entryCount: entryCount,
+            datedCount: dated.count,
+            byMonth: byMonth,
+            byWeek: byWeek,
+            perMonth: Double(dated.count) / Double(months),
+            perWeek: Double(dated.count) / Double(weeks),
+            longestGap: gap.map { EntryRhythm.Gap(days: $0.1 - $0.0, from: Self.label(day: $0.0), to: Self.label(day: $0.1)) },
+            first: Self.label(day: firstDay),
+            last: Self.label(day: lastDay)
+        )
+    }
+
+    /// "Feb 9, 2026", or "Feb 9".
+    private static func label(day: Int, withYear: Bool = true) -> String {
+        let date = components(day: day)
+        let short = "\(shortMonths[date.month - 1]) \(date.day)"
+        return withYear ? "\(short), \(date.year)" : short
     }
 
     static func occurrences(of phrase: [String], in keys: [String]) -> Int {

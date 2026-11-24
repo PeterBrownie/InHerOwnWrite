@@ -277,6 +277,137 @@ func twoPageSpread() -> Data {
     return output as Data
 }
 
+/// An invented photo of both pages of an open journal on a dark table: the fold a little right of the
+/// photo's middle, writing on both pages, and a printed page number at the bottom outer corner of each.
+func openJournal() -> Data {
+    let width = 2400, height = 1800
+    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    context.setFillColor(CGColor(gray: 0.1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    // The left page sits a little lower than the right, as an open book does.
+    context.setFillColor(CGColor(red: 0.95, green: 0.94, blue: 0.88, alpha: 1))
+    context.fill(CGRect(x: 160, y: 110, width: 1140, height: 1580))
+    context.fill(CGRect(x: 1300, y: 130, width: 1000, height: 1580))
+    let fold = 1300
+    for offset in 0..<50 {
+        let shade = 0.95 - 0.38 * (1 - Double(offset) / 50)
+        context.setFillColor(CGColor(red: shade, green: shade * 0.99, blue: shade * 0.93, alpha: 1))
+        context.fill(CGRect(x: fold - offset, y: 130, width: 1, height: 1560))
+        context.fill(CGRect(x: fold + offset, y: 130, width: 1, height: 1560))
+    }
+    let font = NSFont(name: "Bradley Hand", size: 52) ?? .systemFont(ofSize: 50)
+    let ink = NSColor(srgbRed: 0.08, green: 0.09, blue: 0.16, alpha: 1)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+    let left = ["The ferry left at seven and", "the gulls followed it out", "past the lighthouse rocks.",
+                "We ate apples on deck and", "counted the sailboats."]
+    let right = ["By noon the island was", "close enough to see the", "little white church and", "the harbor wall."]
+    for (index, line) in left.enumerated() {
+        NSAttributedString(string: line, attributes: [.font: font, .foregroundColor: ink])
+            .draw(at: CGPoint(x: 250, y: CGFloat(1500 - index * 130)))
+    }
+    for (index, line) in right.enumerated() {
+        NSAttributedString(string: line, attributes: [.font: font, .foregroundColor: ink])
+            .draw(at: CGPoint(x: 1390, y: CGFloat(1520 - index * 130)))
+    }
+    let printed: [NSAttributedString.Key: Any] = [.font: NSFont(name: "Times New Roman", size: 30) ?? .systemFont(ofSize: 30),
+                                                  .foregroundColor: NSColor(white: 0.35, alpha: 1)]
+    NSAttributedString(string: "48", attributes: printed).draw(at: CGPoint(x: 230, y: 170))
+    NSAttributedString(string: "49", attributes: printed).draw(at: CGPoint(x: 2200, y: 190))
+    NSGraphicsContext.restoreGraphicsState()
+    let output = NSMutableData()
+    let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+    CGImageDestinationFinalize(destination)
+    return output as Data
+}
+
+func runSpreadChecks() async throws {
+    print("\nSplitting a photo of both pages")
+    let halves = SpreadScanResult.halves(of: CGRect(x: 0.1, y: 0.2, width: 0.8, height: 0.6), split: 0.25)
+    check("halves meet at the split", abs(halves.left.maxX - 0.3) < 1e-9 && abs(halves.right.minX - 0.3) < 1e-9)
+    check("halves keep the crop's height", halves.left.height == 0.6 && halves.right.minY == 0.2)
+    check("the split stays away from the edges",
+          abs(SpreadScanResult.halves(of: CGRect(x: 0, y: 0, width: 1, height: 1), split: 0.01).left.width - 0.15) < 1e-9)
+    check("the left page number comes from the right one when unread",
+          SpreadScanResult(crop: .zero, split: 0.5, rightNumber: 49).leftPageNumber == 48
+            && SpreadScanResult(crop: .zero, split: 0.5, rightNumber: 1).leftPageNumber == nil)
+    check("a page number missing a digit gives way to its neighbor's",
+          SpreadScanResult(crop: .zero, split: 0.5, leftNumber: 24, rightNumber: 241).leftPageNumber == 240
+            && SpreadScanResult(crop: .zero, split: 0.5, leftNumber: 240, rightNumber: 24).leftPageNumber == 240
+            && SpreadScanResult(crop: .zero, split: 0.5, leftNumber: 52, rightNumber: 61).leftPageNumber == 52)
+
+    let photo = openJournal()
+    let scan = await PageScan.analyzeSpread(jpeg: photo)
+    let fold = scan.crop.minX + scan.crop.width * scan.split
+    check("finds the fold between the pages", abs(fold - 1300.0 / 2400) < 0.015)
+    check("keeps both pages", scan.crop.minX < 250.0 / 2400 && scan.crop.maxX > 2290.0 / 2400
+            && scan.crop.minY < 120.0 / 1800 && scan.crop.maxY > 1680.0 / 1800)
+    check("leaves out most of the table", scan.crop.minX > 0.03 && scan.crop.maxX < 0.99)
+    check("reads both page numbers", scan.leftNumber == 48 && scan.rightNumber == 49)
+
+    let (left, right) = SpreadScanResult.halves(of: scan.crop, split: scan.split)
+    for (name, half, has, lacks) in [("left", left, "ferry", "island"), ("right", right, "island", "ferry")] {
+        let page = try PageFlattener.process(photo, crop: half, flatten: true)
+        let image = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(page as CFData, nil)!, 0, nil)!
+        let (layout, _) = try await PageLayoutFinder.read(image)
+        let text = layout.lines.map { $0.words.map(\.text).joined(separator: " ") }.joined(separator: " ")
+        if !text.contains(has) || text.contains(lacks) { print("        | \(text)") }
+        check("the \(name) page holds only its own writing", text.contains(has) && !text.contains(lacks))
+    }
+
+    // A photo of both pages is often taken with the phone upright, which leaves the pages sideways.
+    let level = PageScan.orientation(ofLines: (0..<5).map { _ in (CGPoint(x: 0.1, y: 0.2), CGPoint(x: 0.8, y: 0.21)) },
+                                     width: 1000, height: 800)
+    check("level lines need no turn", level.quarterTurns == 0 && abs(level.tilt - 0.65) < 0.1)
+    let down = PageScan.orientation(ofLines: (0..<5).map { _ in (CGPoint(x: 0.3, y: 0.9), CGPoint(x: 0.31, y: 0.1)) },
+                                    width: 800, height: 1000)
+    check("lines running down the photo need a turn to the left", down.quarterTurns == 3 && abs(down.tilt) < 1.5)
+    let few = PageScan.orientation(ofLines: [(CGPoint(x: 0.3, y: 0.9), CGPoint(x: 0.3, y: 0.1))], width: 800, height: 1000)
+    check("one line isn't enough to turn a photo", few == .upright)
+    let sideways = try PagePhoto.rotated(photo, degrees: 90)
+    let found = await PageScan.orientation(jpeg: sideways)
+    check("finds which way up a sideways photo of both pages goes", found.quarterTurns == 3 && abs(found.tilt) < 1)
+    let asTaken = await PageScan.orientation(jpeg: photo)
+    check("leaves an upright photo as it is", asTaken.quarterTurns == 0)
+    let upright = await PageScan.analyzeSpread(jpeg: try PagePhoto.rotated(sideways, degrees: Double(found.quarterTurns) * 90))
+    check("finds the same fold once turned upright", abs((upright.crop.minX + upright.crop.width * upright.split) - fold) < 0.01)
+
+    // A crop found on the levelled photo becomes a frame over the photo as shown, and back.
+    let frame = CGRect(x: 0.12, y: 0.18, width: 0.6, height: 0.55)
+    let back = TiltedCrop.photoCrop(TiltedCrop.canvasCrop(frame, degrees: 4.5, aspect: 1.33), degrees: 4.5, aspect: 1.33)
+    check("a levelled crop turns back into the same frame",
+          abs(back.minX - frame.minX) + abs(back.minY - frame.minY) + abs(back.width - frame.width) + abs(back.height - frame.height) < 1e-9)
+}
+
+/// Photos dropped together are added in the order they were taken.
+func runPhotoOrderChecks() throws {
+    print("\nAdding several photos")
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("photo-order-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let context = CGContext(data: nil, width: 40, height: 30, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    let image = context.makeImage()!
+    func write(_ name: String, taken: String?) throws -> URL {
+        let url = folder.appendingPathComponent(name)
+        let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil)!
+        let properties = taken.map { [kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: $0]] as CFDictionary }
+        CGImageDestinationAddImage(destination, image, properties)
+        CGImageDestinationFinalize(destination)
+        return url
+    }
+    let a = try write("a.jpg", taken: "2026:02:14 09:30:00")
+    let b = try write("b.jpg", taken: "2026:02:13 21:05:00")
+    let c = try write("c.jpg", taken: "2026:02:14 09:29:59")
+    let undated = try write("d.jpg", taken: nil)
+    check("reads when a photo was taken", PagePhoto.dateTaken(b).map { Calendar.current.component(.hour, from: $0) } == 21)
+    check("a photo without camera metadata falls back to when the file was made", PagePhoto.dateTaken(undated) != nil)
+    let sorted = PagePhoto.sortedByDate([a, undated, b, c]).map(\.lastPathComponent)
+    check("photos are taken in order, by camera time first", Array(sorted.prefix(3)) == ["b.jpg", "c.jpg", "a.jpg"])
+}
+
 func runPageScanChecks() async throws {
     print("\nFinding the page in a photo")
     check("reads a bare page number", PageNumberFinder.number(in: "58") == 58)

@@ -46,6 +46,45 @@ public enum PagePhoto {
         throw PagePhotoError.tooLarge
     }
 
+    /// When a photo was taken, from its camera metadata, or failing that when the file was created.
+    public static func dateTaken(_ url: URL) -> Date? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+            let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+            let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+            let stamps = [exif?[kCGImagePropertyExifDateTimeOriginal], exif?[kCGImagePropertyExifDateTimeDigitized],
+                          tiff?[kCGImagePropertyTIFFDateTime]]
+            for case let stamp as String in stamps {
+                if let date = exifDate.date(from: stamp) { return date }
+            }
+        }
+        return (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+    }
+
+    /// Photos in the order they were taken; any without a date go last, by name.
+    public static func sortedByDate(_ urls: [URL]) -> [URL] {
+        let dated = urls.map { ($0, dateTaken($0)) }
+        return dated.sorted { a, b in
+            switch (a.1, b.1) {
+            case let (x?, y?) where x != y: return x < y
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return a.0.lastPathComponent.localizedStandardCompare(b.0.lastPathComponent) == .orderedAscending
+            }
+        }.map(\.0)
+    }
+
+    /// Camera time stamps carry no time zone; they're read as this Mac's local time, which only has to put
+    /// photos from one camera in order.
+    private static let exifDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return formatter
+    }()
+
     private static func encode(_ source: CGImageSource, maxDimension: Int, quality: Double) throws -> Data {
         let options = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
