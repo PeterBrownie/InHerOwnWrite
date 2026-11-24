@@ -478,6 +478,40 @@ func runScribbleChecks() async throws {
     check("marks the crossed-out word with ###", marked.count == 1 && marked.first?.hasPrefix(Scribbles.mark) == true)
     check("marks nothing else", lines.joined(separator: " ").components(separatedBy: Scribbles.mark).count == 2)
     if marked.count != 1 { lines.forEach { print("        | \($0)") } }
+
+    // A scribble drawn as a loose coil that touches a printed ruled line, beside a few letter-like strokes.
+    let width = 1000, height = 700, pitch = 60.0
+    let page = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    page.setFillColor(CGColor(gray: 0.95, alpha: 1))
+    page.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    // Rules dark enough to count as ink at the usual threshold, as on the real ruled page.
+    page.setStrokeColor(CGColor(gray: 0.55, alpha: 1))
+    page.setLineWidth(2)
+    for row in stride(from: 50.0, to: Double(height) - 20, by: pitch) {
+        page.move(to: CGPoint(x: 0, y: row)); page.addLine(to: CGPoint(x: Double(width), y: row))
+    }
+    page.strokePath()
+    page.setStrokeColor(CGColor(gray: 0.1, alpha: 1))
+    page.setLineWidth(3)
+    // Letters: open loops and upright strokes standing on a rule.
+    for x in stride(from: 120.0, to: 900, by: 70) where abs(x - 470) > 80 {
+        page.strokeEllipse(in: CGRect(x: x, y: 290, width: 26, height: 30))
+        page.move(to: CGPoint(x: x + 30, y: 290)); page.addLine(to: CGPoint(x: x + 30, y: 335))
+    }
+    page.strokePath()
+    // The coil: loop over loop, drifting sideways, its bottom on the rule at 290.
+    for turn in 0..<22 {
+        let shift = Double(turn) * 2.2
+        page.strokeEllipse(in: CGRect(x: 440 + shift + 6 * sin(Double(turn)), y: 290 + 3 * cos(Double(turn) * 1.7),
+                                      width: 30, height: 40))
+    }
+    let coiled = page.makeImage()!
+    let found = Scribbles.find(in: coiled, lineHeight: pitch / Double(height))
+    let coil = CGRect(x: 0.44, y: 1 - 335.0 / Double(height), width: 0.08, height: 50 / Double(height))
+    check("finds a loose coil touching a ruled line", found.contains { $0.intersects(coil) })
+    check("doesn't take letters for scribbles", found.allSatisfy { $0.intersects(coil) })
+    if found.count != 1 { print("        found \(found)") }
 }
 
 /// The update bar must not ask for more height than a bar needs, or the window grows to fit it.

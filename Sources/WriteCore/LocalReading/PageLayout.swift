@@ -257,8 +257,24 @@ public enum Scribbles {
     public static let mark = "###"
 
     /// Boxes of scribbled-out writing, normalized to the page with the origin at the top left.
+    ///
+    /// The ink is looked at twice: as usual, and counting only ink a fifth darker. A scribble drawn as a loose
+    /// coil can touch a printed ruled line; at the usual threshold the rules count as ink, which joins the
+    /// coil to the rules and the page edge in one blot the size of the page. The rules are lighter than pen
+    /// ink, so the stricter look leaves them out and the coil stands alone.
     public static func find(in image: CGImage, lineHeight: Double) -> [CGRect] {
-        blots(in: image, lineHeight: lineHeight).filter(isScribble).map(\.box)
+        var found: [CGRect] = []
+        for darkness in [1.0, 0.8] {
+            for blot in blots(in: image, lineHeight: lineHeight, darkness: darkness) where isScribble(blot) {
+                let repeated = found.contains { known in
+                    let shared = known.intersection(blot.box)
+                    return !shared.isNull && shared.width * shared.height
+                        > 0.5 * min(known.width * known.height, blot.box.width * blot.box.height)
+                }
+                if !repeated { found.append(blot.box) }
+            }
+        }
+        return found
     }
 
     struct Blot {
@@ -272,19 +288,21 @@ public enum Scribbles {
         let solid: Double
     }
 
-    /// Tested on three real pages: scribbles had a solid core of 0.3 to 0.4, and letters, even heavy ones,
-    /// 0.15 or less. Ink touching the photo's edge is paper edges, binding, or shadow.
+    /// Tested on three real pages: scribbles had a solid core of 0.3 to 0.42, and letters, even heavy ones,
+    /// 0.15 or less. A loose coil fills less of its box (0.39) than a solid scribble, so fill only needs to
+    /// be 0.35; the solid core is what tells scribbles from letters. Ink touching the photo's edge is paper
+    /// edges, binding, or shadow.
     static func isScribble(_ blot: Blot) -> Bool {
         let edge = 0.01
-        return blot.solid >= 0.2 && blot.fill >= 0.4 && blot.height >= 0.45 && blot.width >= 0.45
+        return blot.solid >= 0.2 && blot.fill >= 0.35 && blot.height >= 0.45 && blot.width >= 0.45
             && blot.height <= 2.5 && blot.width <= 8
             && blot.box.minX > edge && blot.box.maxX < 1 - edge && blot.box.minY > edge && blot.box.maxY < 1 - edge
     }
 
-    static func blots(in image: CGImage, lineHeight: Double) -> [Blot] {
+    static func blots(in image: CGImage, lineHeight: Double, darkness: Double = 1) -> [Blot] {
         guard let ink = InkMap(image: image, maxDimension: 1000) else { return [] }
         let width = ink.width, height = ink.height
-        let threshold = ink.middleThreshold()
+        let threshold = UInt8(Double(ink.middleThreshold()) * darkness)
         let pitch = lineHeight * Double(height)
         var seen = [Bool](repeating: false, count: width * height)
         var found: [Blot] = []

@@ -141,11 +141,23 @@ read each line more than once, and their differences become options for the mode
 ## Scribbled-out writing
 
 OCR reads scribbles as stray letters or skips them, so they are found from the ink: a connected blot whose
-box is at least 40% ink, at least half a line tall, with a solid core (ink a little way off in every
+box is at least 35% ink (40% at first), at least half a line tall, with a solid core (ink a little way off in every
 direction) of at least 0.2. On the real pages, scribbles had solid cores of 0.3 to 0.4, and letters at most
 0.15. Fill alone flagged filled-in letter loops by the dozen (16 false marks across two pages); with the solid
-core, the two solid scribbles were found and nothing else was. A scribble made of a loose coil, rather than
-solid ink, is still missed. Blots touching the photo's edge or outside a line's span (binding, shadow) are
+core, the two solid scribbles were found and nothing else was.
+
+**Loose coils.** A scribble drawn as a loose coil, on one of the ruled pages, was missed, but not for being
+loose. It touched a printed ruled line, and at the usual threshold the rules count as ink, so the coil, the
+rules, and the dark page edge made one blot the size of the page. The rules are lighter than pen ink:
+counting only ink a fifth darker (80% of the threshold) drops them, and the coil stands alone with a solid
+core of 0.42, against at most 0.11 for any letter, but a fill of only 0.39. So scribbles are now looked for
+at both thresholds (overlapping finds counted once), and fill needs only 0.35; the solid core is what tells
+scribbles from letters. On the three real pages this finds all three scribbles, the coil included, and
+nothing else. At 65% the solid scribble on the other ruled page broke apart, so 80% was kept.
+
+Also tried: counting how many strokes each row and column of a small window crosses, with no blots at all.
+The coil ranked sixth on its page, behind windows on the dark page edge and the facing page's strip, so
+it was set aside. Blots touching the photo's edge or outside a line's span (binding, shadow) are
 ignored. Scribbles become "###", as in readings from Claude.
 
 ## Fixing words
@@ -192,9 +204,6 @@ Not started. Listed so they aren't forgotten.
 
 - **Test Clef-flash (9B) against MiniCPM-OCR-Jev.** Clef-flash reads images and scores many options in one
   pass, which could replace one request per option. Compare speed, memory, and accuracy on the same pages.
-- **Catch scribbles drawn as loose coils.** The solid-core test misses them; they look like letters by fill
-  and solidity. Stroke crossings per area, or the share of the blot that Vision reads as no text, might
-  separate them.
 
 ## Known issues
 
