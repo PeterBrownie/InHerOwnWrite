@@ -485,11 +485,12 @@ func runRender(output: URL, sample: URL?) async throws {
     defer { try? FileManager.default.removeItem(at: directory) }
 
     let model = AppModel(directory: directory)
-    await render(RootView().environmentObject(model), size: CGSize(width: 1100, height: 720),
+    var updater = Updater.preview(.idle)
+    await render(RootView().environmentObject(model).environmentObject(updater), size: CGSize(width: 1100, height: 720),
                  to: output.appendingPathComponent("1-create.png"))
 
     await model.createVault(password: "synthetic password")
-    await render(RootView().environmentObject(model), size: CGSize(width: 1100, height: 720),
+    await render(RootView().environmentObject(model).environmentObject(updater), size: CGSize(width: 1100, height: 720),
                  to: output.appendingPathComponent("2-recovery-dark.png"), dark: true)
     model.lock()
     check("sleep can't dismiss the recovery key", { if case .showRecoveryKey = model.screen { return true }; return false }())
@@ -530,24 +531,28 @@ func runRender(output: URL, sample: URL?) async throws {
     model.flushEdits()
     model.selectedPageID = model.pages.first?.id
     let size = CGSize(width: 1240, height: 800)
-    await render(RootView().environmentObject(model), size: size, to: output.appendingPathComponent("3-library.png"))
-    await render(RootView().environmentObject(model), size: size,
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("3-library.png"))
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size,
                  to: output.appendingPathComponent("3-library-dark.png"), dark: true)
+    updater = .preview(.preparing)
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size,
+                 to: output.appendingPathComponent("12-update-in-library-dark.png"), dark: true)
+    updater = .preview(.idle)
     model.twoPageSpread = true
-    await render(RootView().environmentObject(model), size: CGSize(width: 1440, height: 860),
+    await render(RootView().environmentObject(model).environmentObject(updater), size: CGSize(width: 1440, height: 860),
                  to: output.appendingPathComponent("3b-two-pages.png"))
     model.showPhoto = false
     model.accurateLineBreaks = false
-    await render(RootView().environmentObject(model), size: size,
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size,
                  to: output.appendingPathComponent("3c-two-pages-no-photo-reflowed.png"))
     model.twoPageSpread = false
     model.showPhoto = true
     model.accurateLineBreaks = true
     model.setLibraryMode(.entries)
     model.selectedEntryID = model.entries.first { $0.parts.count > 1 }?.id
-    await render(RootView().environmentObject(model), size: size, to: output.appendingPathComponent("3d-entries.png"))
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("3d-entries.png"))
     model.showingAnalysis = true
-    await render(RootView().environmentObject(model), size: size, to: output.appendingPathComponent("8-analysis.png"))
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("8-analysis.png"))
     await render(AnalysisDetail(initialTerm: "Theo").environmentObject(model), size: CGSize(width: 900, height: 900),
                  to: output.appendingPathComponent("9-analysis-term.png"))
     await render(AnalysisDetail(initialTerm: "Theo").environmentObject(model), size: CGSize(width: 900, height: 900),
@@ -572,7 +577,7 @@ func runRender(output: URL, sample: URL?) async throws {
     await render(LocalSessionView(session: session).environmentObject(model), size: CGSize(width: 1320, height: 840),
                  to: output.appendingPathComponent("11-local-live-dark.png"), dark: true)
     model.lock()
-    await render(RootView().environmentObject(model), size: CGSize(width: 1100, height: 720),
+    await render(RootView().environmentObject(model).environmentObject(updater), size: CGSize(width: 1100, height: 720),
                  to: output.appendingPathComponent("6-locked-dark.png"), dark: true)
     print("Rendered to \(output.path)")
 }

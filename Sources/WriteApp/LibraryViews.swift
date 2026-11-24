@@ -4,6 +4,7 @@ import WriteCore
 
 public struct LibraryView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var updater: Updater
     @Environment(\.openWindow) private var openWindow
 
     public init() {}
@@ -22,14 +23,20 @@ public struct LibraryView: View {
             }
             .navigationSplitViewColumnWidth(min: 230, ideal: 270, max: 360)
         } detail: {
-            if model.showingAnalysis {
-                AnalysisDetail()
-            } else if model.libraryMode == .entries, let entry = model.selectedEntry {
-                EntryReader(entry: entry).id(entry.id)
-            } else if model.libraryMode == .pages, model.selectedPage != nil {
-                PageReader()
-            } else {
-                EmptyDetail()
+            Group {
+                if model.showingAnalysis {
+                    AnalysisDetail()
+                } else if model.libraryMode == .entries, let entry = model.selectedEntry {
+                    EntryReader(entry: entry).id(entry.id)
+                } else if model.libraryMode == .pages, model.selectedPage != nil {
+                    PageReader()
+                } else {
+                    EmptyDetail()
+                }
+            }
+            // Inside the detail column, below its toolbar, so it stays clear of the sidebar.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if updater.showsBanner { UpdateBanner(updater: updater) }
             }
         }
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all journals")

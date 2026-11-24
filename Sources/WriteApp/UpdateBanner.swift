@@ -40,7 +40,8 @@ public struct UpdateBanner: View {
         .padding(.horizontal, 18)
         .frame(height: 56)
         .frame(maxWidth: .infinity)
-        .background(Theme.notice)
+        // Only behind the bar itself: by default a color would spread up behind the title bar.
+        .background(Theme.notice, ignoresSafeAreaEdges: [])
         .overlay(alignment: .bottom) { Divider() }
     }
 

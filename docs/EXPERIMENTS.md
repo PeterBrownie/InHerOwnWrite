@@ -143,6 +143,9 @@ ignored. Scribbles become "###", as in readings from Claude.
 - Updates are built in the background from the repository while the app stays open; the app is closed only
   for the few seconds it takes to swap the new copy in. The first version quit right away and rebuilt, which
   left the app closed for a minute or two.
+- The update bar sits in the library's detail column, below the title bar, with its color kept inside the
+  bar. It used to be attached to the whole window, where it tinted the title bar and the top of the sidebar
+  and covered the "Journals" header. Screens without the sidebar (unlock, setup) still show it across the top.
 - The update check never uses the keychain: with the keychain, git asked for permission every launch. A
   private repository needs a read-only deploy key on each Mac; the repository was made public instead, with
   its history started fresh.
@@ -188,12 +191,6 @@ Not started. Listed so they aren't forgotten.
 
 ## Known issues
 
-- **The update bar bleeds into the sidebar's title bar.** The bar is attached to the top of the whole
-  window (a top safe-area inset on the root view). In the library's split view, its background fills the
-  title bar area behind the window buttons and across the sidebar, and it overlaps the sidebar's
-  "Journals" header, so the sidebar's top looks tinted. Seen in dark mode, with the build from before the
-  switch to green. Likely fix: show the bar inside the detail column only, below its toolbar, or as a
-  title bar accessory, rather than over the whole window.
 - **The Straighten slider lags badly.** Every step of the slider decodes the full prepared photo (up to
   2400 px), rotates it, and builds a new preview, and each step starts its own task without cancelling the
   last; in Result view each step also re-crops and re-flattens. Preferred fix: leave the photo still and

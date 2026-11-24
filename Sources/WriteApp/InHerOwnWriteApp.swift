@@ -17,14 +17,11 @@ public struct InHerOwnWriteApp: App {
         WindowGroup("In Her Own Write", id: "main") {
             RootView()
                 .environmentObject(model)
+                .environmentObject(updater)
                 .frame(minWidth: 980, minHeight: 640)
                 .background(WindowPrivacy())
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     model.prepareToQuit()
-                }
-                // An update is only offered; nothing restarts until she chooses Update & Restart.
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if updater.showsBanner { UpdateBanner(updater: updater) }
                 }
                 .task { await updater.check(quietly: true) }
                 .alert(updater.message ?? "", isPresented: Binding(

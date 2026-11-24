@@ -4,6 +4,7 @@ import WriteCore
 
 public struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var updater: Updater
 
     public init() {}
 
@@ -16,6 +17,11 @@ public struct RootView: View {
             case .locked: UnlockView()
             case .library: LibraryView()
             }
+        }
+        // An update is only offered; nothing restarts until she chooses Update & Restart. The library shows
+        // the bar in its detail column instead, so it doesn't spread behind the sidebar and title bar.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.screen != .library && updater.showsBanner { UpdateBanner(updater: updater) }
         }
         .alert("Something went wrong", isPresented: errorBinding) {
             Button("OK") { model.errorMessage = nil }
