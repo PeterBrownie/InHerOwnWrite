@@ -325,7 +325,23 @@ extension AppModel {
     /// Reads a page with the decision model on this Mac. The photo never leaves it. A reading stopped partway
     /// picks up where it stopped, unless `startOver`.
     public func readOnThisMac(_ id: UUID, startOver: Bool = false) {
+        readOnThisMac(id, startOver: startOver, announce: true)
+    }
+
+    /// `announce` says what's missing in an alert; adding a page doesn't, since the sheet already says so.
+    func readOnThisMac(_ id: UUID, startOver: Bool = false, announce: Bool) {
         guard vault != nil, !localQueue.contains(id) else { return }
+        // Without llama.cpp nothing can run: leave a finished page as it is, keep a new one waiting for
+        // whichever reading comes next, and say what's needed.
+        guard hasLocalRuntime else {
+            let problem = DecisionModelError.runtimeMissing.errorDescription
+            if page(id: id)?.status != .done {
+                try? vault?.setStatus(pageID: id, status: .waiting, problem: problem)
+                try? reload()
+            }
+            if announce { errorMessage = problem }
+            return
+        }
         if startOver {
             try? vault?.clearProgress(pageID: id)
             pagesWithProgress.remove(id)

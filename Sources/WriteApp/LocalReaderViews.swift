@@ -69,7 +69,7 @@ struct ModelStatus: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !model.hasLocalRuntime {
-                Label("llama.cpp isn't installed. In Terminal, run: brew install llama.cpp", systemImage: "exclamationmark.triangle")
+                Label(DecisionModelFiles.runtimeHelp, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(Theme.highlight)
                     .textSelection(.enabled)
             }

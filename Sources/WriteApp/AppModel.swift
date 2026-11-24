@@ -443,7 +443,7 @@ public final class AppModel: ObservableObject {
             texts[page.id] = ""
             try reload()
             selectedJournalID = journalID
-            if readLocally { readOnThisMac(page.id) } else { enqueue(page.id) }
+            if readLocally { readOnThisMac(page.id, announce: false) } else { enqueue(page.id) }
             return true
         } catch {
             errorMessage = error.localizedDescription

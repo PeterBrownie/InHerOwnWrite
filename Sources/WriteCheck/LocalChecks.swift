@@ -396,6 +396,59 @@ func runReleaseUpdateChecks() {
     check("refuses a copy changed after signing", Updater.checkDownloadedApp(app, identifier: "local.inherownwrite.journal") != nil)
 }
 
+/// A Mac without Homebrew or llama.cpp, such as one the app was just sent to: reading on this Mac says what's
+/// missing and stops before touching anything, and pages stay readable with Claude.
+@MainActor
+func runMissingRuntimeChecks() async {
+    print("\nReading on this Mac without llama.cpp")
+    let saved = (DecisionModelFiles.runtimePaths, DecisionModelFiles.homebrewPaths, ProcessInfo.processInfo.environment["LLAMA_SERVER"])
+    let nowhere = FileManager.default.temporaryDirectory.appendingPathComponent("nowhere-\(UUID().uuidString)")
+    DecisionModelFiles.runtimePaths = [nowhere.appendingPathComponent("llama-server").path]
+    DecisionModelFiles.homebrewPaths = [nowhere.appendingPathComponent("brew").path]
+    unsetenv("LLAMA_SERVER")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("no-runtime-\(UUID().uuidString)")
+    defer {
+        (DecisionModelFiles.runtimePaths, DecisionModelFiles.homebrewPaths) = (saved.0, saved.1)
+        if let custom = saved.2 { setenv("LLAMA_SERVER", custom, 1) }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    check("finds no llama.cpp", DecisionModelFiles.findRuntime() == nil)
+    check("without Homebrew, says where to get it", DecisionModelFiles.runtimeHelp.contains("brew.sh"))
+    DecisionModelFiles.homebrewPaths = ["/bin/sh"]  // Something that exists, standing in for brew.
+    check("with Homebrew, only asks for llama.cpp",
+          !DecisionModelFiles.runtimeHelp.contains("brew.sh") && DecisionModelFiles.runtimeHelp.contains("brew install llama.cpp"))
+    DecisionModelFiles.homebrewPaths = [nowhere.appendingPathComponent("brew").path]
+
+    let server = DecisionServer(files: DecisionModelFiles(directory: directory))
+    var thrown: Error?
+    do { try await server.start() } catch { thrown = error }
+    check("the model won't start, and says why", (thrown as? DecisionModelError) == .runtimeMissing)
+    let running = await server.isRunning
+    check("nothing is left running", !running)
+
+    let model = AppModel(directory: directory)
+    await model.createVault(password: "synthetic password")
+    model.confirmRecoveryKeySaved()
+    model.showSettings = false
+    guard let journal = model.createJournal(name: "Check Journal"), let jpeg = try? PagePhoto.prepare(handwrittenPage()),
+          model.addPage(journalID: journal.id, number: 3, jpeg: jpeg, replacing: false, readLocally: true),
+          let added = model.pages.first
+    else {
+        check("adds a page to read on this Mac", false)
+        return
+    }
+    check("a new page waits instead of failing", added.status == .waiting && added.problem?.contains("brew.sh") == true)
+    check("nothing is queued", model.localQueueCount == 0)
+    check("adding a page doesn't also raise an alert", model.errorMessage == nil)
+
+    try? model.saveLocalReading(LocalReadResult(text: "Already read", notes: []), pageID: added.id)
+    model.readOnThisMac(added.id)
+    check("a page already read keeps its reading", model.page(id: added.id)?.status == .done && model.texts[added.id] == "Already read")
+    check("asking to read on this Mac says what's missing", model.errorMessage?.contains("brew.sh") == true)
+    model.lock()
+}
+
 private func isNewer(_ result: Result<Bool, Updater.CheckError>?) -> Bool? {
     if case .success(let newer) = result { return newer }
     return nil

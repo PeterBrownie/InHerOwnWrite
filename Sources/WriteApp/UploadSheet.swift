@@ -290,6 +290,14 @@ public struct UploadSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if !model.hasLocalRuntime {
+                        Label(DecisionModelFiles.runtimeHelp + " The page will be saved and can be read later.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(Theme.highlight)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 

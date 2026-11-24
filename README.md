@@ -109,8 +109,9 @@ first read, pick another spelling, keep it, or type a correction. In the reading
 decided can be clicked and fixed while the rest of the page is still being read; the fixes are saved with
 the page.
 
-It needs llama.cpp (`brew install llama.cpp`) and a one-time 2.7 GB model download from Hugging Face. On an
-M3 Pro, finding the lines takes about 5 seconds and each decision about 170 ms. **Quick** reads a short
+It needs llama.cpp, installed with [Homebrew](https://brew.sh) (`brew install llama.cpp`), and a one-time
+2.7 GB model download from Hugging Face. Without llama.cpp, the app says what to install and leaves pages
+waiting to be read with Claude. On an M3 Pro, finding the lines takes about 5 seconds and each decision about 170 ms. **Quick** reads a short
 invented page in about 45 seconds; **Careful** takes longer. While reading, the model
 uses about 3 GB of memory, which is freed 3 minutes after the last page. The model runs in a private
 process on 127.0.0.1 that stops when the app quits or locks.

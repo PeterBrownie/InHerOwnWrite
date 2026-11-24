@@ -17,7 +17,7 @@ public enum DecisionModelError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .runtimeMissing:
-            return "Reading on this Mac needs llama.cpp. Install it with Homebrew: brew install llama.cpp"
+            return DecisionModelFiles.runtimeHelp + " Until then, pages can be read with Claude."
         case .modelMissing:
             return "The reading model hasn't been downloaded yet."
         case .downloadFailed(let reason):
@@ -59,9 +59,25 @@ public struct DecisionModelFiles: Sendable {
 
     public static var downloadSize: Int64 { expectedSizes.values.reduce(0, +) }
 
+    /// Where Homebrew puts llama-server and itself, on Apple silicon and on Intel. Checks point these at empty
+    /// folders to stand in for a Mac without them.
+    nonisolated(unsafe) public static var runtimePaths = ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"]
+    nonisolated(unsafe) public static var homebrewPaths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+
+    public static var hasHomebrew: Bool {
+        homebrewPaths.contains { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// What this Mac needs before it can read, worded for whether Homebrew is there yet.
+    public static var runtimeHelp: String {
+        hasHomebrew
+            ? "Reading on this Mac needs llama.cpp. In Terminal, run: brew install llama.cpp"
+            : "Reading on this Mac needs llama.cpp, which comes from Homebrew. Install Homebrew from brew.sh, then in Terminal run: brew install llama.cpp"
+    }
+
     /// Homebrew's llama-server, or one named in LLAMA_SERVER.
     public static func findRuntime() -> URL? {
-        var paths = ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"]
+        var paths = runtimePaths
         if let custom = ProcessInfo.processInfo.environment["LLAMA_SERVER"], !custom.isEmpty {
             paths.insert(custom, at: 0)
         }
