@@ -84,6 +84,13 @@ read each line more than once, and their differences become options for the mode
 - **Paper edges:** brightness against the background, plus 2% of room so a page number at the edge isn't cut.
 - **Page numbers:** a short number alone near the top or bottom. A small printed number was missed in a
   whole-photo pass, so the top and bottom of the crop are also read up close.
+- **Straightening by hand:** the Straighten slider turns the crop frame over a still photo instead of turning
+  the photo. The first version decoded the full photo (up to 2400 px), turned it, and drew a new preview at
+  every step of the slider, without cancelling the step before, and in Result view also re-cropped and
+  re-flattened; it lagged badly. Now dragging only redraws the frame, edges move along the frame's own sides,
+  and the frame shrinks or moves to stay inside the photo at its angle. The photo is turned and cut once,
+  when the page is saved or Result is shown (after the slider rests for a quarter second). Quarter turns
+  still turn the photo, so a sideways page is shown upright.
 - **Flattening curl:** the page is measured in 14 vertical bands and up to 5 rows; each band's row profile
   is lined up with its neighbor's to find how far lines drift, a smooth curve is fitted per row (dropping
   outliers, such as bands catching the page edge), and each column is shifted up or down. On an invented
@@ -191,13 +198,4 @@ Not started. Listed so they aren't forgotten.
 
 ## Known issues
 
-- **The Straighten slider lags badly.** Every step of the slider decodes the full prepared photo (up to
-  2400 px), rotates it, and builds a new preview, and each step starts its own task without cancelling the
-  last; in Result view each step also re-crops and re-flattens. Preferred fix: leave the photo still and
-  turn the crop frame instead. The crop becomes a rectangle at an angle over the photo, with the area
-  outside it darkened, so dragging the slider only redraws the frame and costs nothing. The photo is turned
-  and cut once, when the page is saved or Result is shown. Dragging an edge then moves it along the frame's
-  own tilted sides, and the frame must stay inside the photo at its angle. Quarter turns could stay as they
-  are, turning the photo, so a sideways page is shown upright. Fallback fix: turn the preview with a view
-  rotation while dragging, render once when the drag ends from a small copy (about 1000 px), and cancel
-  renders a newer step replaces.
+None open.

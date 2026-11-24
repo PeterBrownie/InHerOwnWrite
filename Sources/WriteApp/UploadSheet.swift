@@ -25,8 +25,11 @@ public struct UploadSheet: View {
     @ViewState private var quarterTurns = 0
     /// A small extra turn, in degrees clockwise, to level a tilted page.
     @ViewState private var straighten = 0.0
-    /// The photo as turned, shown in the crop editor so the crop lines up with what will be saved.
+    /// The photo after its quarter turns, shown in the crop editor. The small straightening turn isn't
+    /// applied to it; the crop frame is turned over it instead.
     @ViewState private var turned: NSImage?
+    /// The Result view's pending render, cancelled when a newer setting replaces it.
+    @ViewState private var resultTask: Task<Void, Never>?
     @ViewState private var isScanning = false
     @ViewState private var isPreparing = false
     @ViewState private var isChoosingFile = false
@@ -114,7 +117,7 @@ public struct UploadSheet: View {
                         }
                         .padding(10)
                     } else {
-                        CropEditor(image: turned ?? preview, crop: $crop)
+                        CropEditor(image: turned ?? preview, crop: $crop, angle: straighten)
                             .padding(10)
                     }
                 } else if isPreparing {
@@ -166,7 +169,7 @@ public struct UploadSheet: View {
                 .onChange(of: showResult) { refreshResult() }
                 .onChange(of: flattenPages) { refreshResult() }
                 .onChange(of: crop) { if showResult { refreshResult() } }
-                .onChange(of: straighten) { refreshTurned() }
+                .onChange(of: straighten) { refreshResult(after: 0.25) }
                 HStack(spacing: 10) {
                     Toggle("Flatten curved pages", isOn: $flattenPages)
                         .toggleStyle(.checkbox)
@@ -431,26 +434,45 @@ public struct UploadSheet: View {
 
     private var rotation: Double { Double(quarterTurns) * 90 + straighten }
 
-    /// Crops and flattens off the main thread for the Result view.
-    private func refreshResult() {
+    /// The crop as it will be cut: the turned frame, fitted inside the photo, as an upright crop of the photo
+    /// once it has been turned by `rotation`.
+    private var savedCrop: CGRect {
+        // The photo's shape after its quarter turns, known even before the turned copy is drawn.
+        let size = preview?.size ?? CGSize(width: 1, height: 1)
+        let sideways = quarterTurns % 2 == 1
+        let width = sideways ? size.height : size.width, height = sideways ? size.width : size.height
+        let aspect = height > 0 ? width / height : 1
+        let frame = TiltedCrop.fitted(crop, degrees: straighten, aspect: aspect)
+        return TiltedCrop.canvasCrop(frame, degrees: straighten, aspect: aspect)
+    }
+
+    /// Crops and flattens off the main thread for the Result view. `delay` lets a slider settle first; a newer
+    /// request cancels an older one.
+    private func refreshResult(after delay: Double = 0) {
+        resultTask?.cancel()
         guard showResult, let jpeg else { return }
         isProcessing = true
-        let crop = crop, flatten = flattenPages, rotation = rotation
-        Task {
+        let crop = savedCrop, flatten = flattenPages, rotation = rotation
+        resultTask = Task {
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard !Task.isCancelled else { return }
             let processed = await Task.detached(priority: .userInitiated) {
                 try? PageFlattener.process(jpeg, crop: crop, flatten: flatten, rotation: rotation)
             }.value
             // Only the newest request counts.
-            guard self.jpeg == jpeg, self.crop == crop, self.flattenPages == flatten, self.rotation == rotation else { return }
+            guard !Task.isCancelled, self.jpeg == jpeg, self.savedCrop == crop, self.flattenPages == flatten,
+                  self.rotation == rotation else { return }
             result = processed.flatMap(NSImage.init(data:))
             isProcessing = false
         }
     }
 
-    /// Redraws the turned photo for the crop editor.
+    /// Redraws the photo after a quarter turn for the crop editor.
     private func refreshTurned() {
         guard let jpeg else { return }
-        let rotation = rotation
+        let rotation = Double(quarterTurns) * 90
         if rotation == 0 {
             turned = nil
             refreshResult()
@@ -464,7 +486,7 @@ public struct UploadSheet: View {
                 else { return nil }
                 return NSImage(cgImage: turned, size: NSSize(width: turned.width, height: turned.height))
             }.value
-            guard self.jpeg == jpeg, self.rotation == rotation else { return }
+            guard self.jpeg == jpeg, Double(self.quarterTurns) * 90 == rotation else { return }
             turned = image
             refreshResult()
         }
@@ -477,14 +499,15 @@ public struct UploadSheet: View {
         quarterTurns = (quarterTurns + quarters + 4) % 4
         crop = PagePhoto.rotatedCrop(crop, quarters: quarters)
         refreshTurned()
-        let rotation = rotation
+        // The page is looked for on the photo as turned by quarters; the straightening frame turns over that.
+        let rotation = Double(quarterTurns) * 90
         isScanning = true
         Task {
             let found = await Task.detached(priority: .userInitiated) { () -> PageScanResult? in
                 guard let turnedJPEG = try? PagePhoto.rotated(jpeg, degrees: rotation) else { return nil }
                 return await PageScan.analyze(jpeg: turnedJPEG)
             }.value
-            guard self.jpeg == jpeg, self.rotation == rotation else { return }
+            guard self.jpeg == jpeg, Double(self.quarterTurns) * 90 == rotation else { return }
             isScanning = false
             if let found {
                 suggestion = found
@@ -498,7 +521,7 @@ public struct UploadSheet: View {
         guard let journalID, let number, let jpeg else { return }
         let page: Data
         do {
-            page = try PageFlattener.process(jpeg, crop: crop, flatten: flattenPages, rotation: rotation)
+            page = try PageFlattener.process(jpeg, crop: savedCrop, flatten: flattenPages, rotation: rotation)
         } catch {
             problem = error.localizedDescription
             return
@@ -530,14 +553,18 @@ public struct UploadSheet: View {
 }
 
 /// The photo with the part to keep left bright and everything else darkened. Drag an edge or corner to
-/// adjust it, or drag inside to move it.
+/// adjust it, or drag inside to move it. With a straightening angle, the photo stays still and the frame
+/// turns over it, so the slider costs nothing to drag; edges then move along the frame's own sides.
 public struct CropEditor: View {
     let image: NSImage
     @Binding var crop: CGRect
+    /// The clockwise turn, in degrees, that will level the page. The frame is drawn turned the other way.
+    let angle: Double
 
-    public init(image: NSImage, crop: Binding<CGRect>) {
+    public init(image: NSImage, crop: Binding<CGRect>, angle: Double = 0) {
         self.image = image
         _crop = crop
+        self.angle = angle
     }
 
     @ViewState private var dragStart: CGRect?
@@ -547,11 +574,17 @@ public struct CropEditor: View {
         case middle, topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
     }
 
+    private var aspect: Double {
+        image.size.height > 0 ? image.size.width / image.size.height : 1
+    }
+
     public var body: some View {
         GeometryReader { geometry in
             let frame = fitted(in: geometry.size)
-            let keep = CGRect(x: frame.minX + crop.minX * frame.width, y: frame.minY + crop.minY * frame.height,
-                              width: crop.width * frame.width, height: crop.height * frame.height)
+            let shown = TiltedCrop.fitted(crop, degrees: angle, aspect: aspect)
+            let corners = TiltedCrop.corners(shown, degrees: angle, aspect: aspect).map { point(of: $0, in: frame) }
+            let keep = CGRect(x: frame.minX + shown.minX * frame.width, y: frame.minY + shown.minY * frame.height,
+                              width: shown.width * frame.width, height: shown.height * frame.height)
             ZStack(alignment: .topLeading) {
                 Image(nsImage: image)
                     .resizable()
@@ -559,16 +592,18 @@ public struct CropEditor: View {
                     .offset(x: frame.minX, y: frame.minY)
                 Path { path in
                     path.addRect(frame)
-                    path.addRect(keep)
+                    path.addLines(corners)
+                    path.closeSubpath()
                 }
                 .fill(Color.black.opacity(0.62), style: FillStyle(eoFill: true))
-                Rectangle()
-                    .strokeBorder(Color.white, lineWidth: 1.5)
-                    .frame(width: keep.width, height: keep.height)
-                    .offset(x: keep.minX, y: keep.minY)
-                    .shadow(color: .black.opacity(0.4), radius: 1)
+                Path { path in
+                    path.addLines(corners)
+                    path.closeSubpath()
+                }
+                .stroke(Color.white, lineWidth: 1.5)
+                .shadow(color: .black.opacity(0.4), radius: 1)
                 ForEach(Handle.allCases, id: \.self) { handle in
-                    handleView(handle, keep: keep, frame: frame)
+                    handleView(handle, keep: keep, corners: corners, frame: frame)
                 }
             }
         }
@@ -581,9 +616,13 @@ public struct CropEditor: View {
         return CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height)
     }
 
+    private func point(of normalized: CGPoint, in frame: CGRect) -> CGPoint {
+        CGPoint(x: frame.minX + normalized.x * frame.width, y: frame.minY + normalized.y * frame.height)
+    }
+
     @ViewBuilder
-    private func handleView(_ handle: Handle, keep: CGRect, frame: CGRect) -> some View {
-        let point = position(of: handle, in: keep)
+    private func handleView(_ handle: Handle, keep: CGRect, corners: [CGPoint], frame: CGRect) -> some View {
+        let point = position(of: handle, corners: corners)
         let isMiddle = handle == .middle
         let size: CGSize = isMiddle ? CGSize(width: max(keep.width - 40, 10), height: max(keep.height - 40, 10))
             : (handle == .top || handle == .bottom ? CGSize(width: max(keep.width - 44, 20), height: 18)
@@ -604,32 +643,36 @@ public struct CropEditor: View {
                     .contentShape(Rectangle())
             }
         }
+        .rotationEffect(.degrees(-angle))
         .position(point)
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    let start = dragStart ?? crop
-                    if dragStart == nil { dragStart = crop }
-                    let dx = value.translation.width / max(frame.width, 1)
-                    let dy = value.translation.height / max(frame.height, 1)
-                    crop = adjusted(start, handle: handle, dx: dx, dy: dy)
+                    let start = dragStart ?? TiltedCrop.fitted(crop, degrees: angle, aspect: aspect)
+                    if dragStart == nil { dragStart = start }
+                    // In units of the photo's height, the same along both axes.
+                    let unit = max(frame.height, 1)
+                    crop = adjusted(start, handle: handle,
+                                    dx: value.translation.width / unit, dy: value.translation.height / unit)
                 }
                 .onEnded { _ in dragStart = nil }
         )
         .pointerStyle(pointer(for: handle))
     }
 
-    private func position(of handle: Handle, in rect: CGRect) -> CGPoint {
+    private func position(of handle: Handle, corners: [CGPoint]) -> CGPoint {
+        func middle(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
+        let topLeft = corners[0], topRight = corners[1], bottomRight = corners[2], bottomLeft = corners[3]
         switch handle {
-        case .topLeft: return CGPoint(x: rect.minX, y: rect.minY)
-        case .top: return CGPoint(x: rect.midX, y: rect.minY)
-        case .topRight: return CGPoint(x: rect.maxX, y: rect.minY)
-        case .right: return CGPoint(x: rect.maxX, y: rect.midY)
-        case .bottomRight: return CGPoint(x: rect.maxX, y: rect.maxY)
-        case .bottom: return CGPoint(x: rect.midX, y: rect.maxY)
-        case .bottomLeft: return CGPoint(x: rect.minX, y: rect.maxY)
-        case .left: return CGPoint(x: rect.minX, y: rect.midY)
-        case .middle: return CGPoint(x: rect.midX, y: rect.midY)
+        case .topLeft: return topLeft
+        case .top: return middle(topLeft, topRight)
+        case .topRight: return topRight
+        case .right: return middle(topRight, bottomRight)
+        case .bottomRight: return bottomRight
+        case .bottom: return middle(bottomLeft, bottomRight)
+        case .bottomLeft: return bottomLeft
+        case .left: return middle(topLeft, bottomLeft)
+        case .middle: return middle(topLeft, bottomRight)
         }
     }
 
@@ -647,20 +690,47 @@ public struct CropEditor: View {
         }
     }
 
-    /// Moves the dragged edges, keeping the crop inside the photo and at least a tenth of it in each direction.
+    /// Moves the dragged edges along the frame's own sides, keeping the frame inside the photo at its angle and
+    /// at least a tenth of the photo in each direction. `dx` and `dy` are in units of the photo's height.
     private func adjusted(_ start: CGRect, handle: Handle, dx: Double, dy: Double) -> CGRect {
-        let smallest = 0.1
-        var minX = start.minX, maxX = start.maxX, minY = start.minY, maxY = start.maxY
-        if handle == .middle {
-            let x = min(max(start.minX + dx, 0), 1 - start.width)
-            let y = min(max(start.minY + dy, 0), 1 - start.height)
-            return CGRect(x: x, y: y, width: start.width, height: start.height)
+        let aspect = aspect
+        func moved(_ fraction: Double) -> CGRect {
+            let dx = dx * fraction, dy = dy * fraction
+            if handle == .middle {
+                return start.offsetBy(dx: dx / aspect, dy: dy)
+            }
+            // The drag in the frame's own directions: the frame is turned counterclockwise by `angle`.
+            let radians = angle * .pi / 180
+            let along = dx * cos(radians) - dy * sin(radians)
+            let across = dx * sin(radians) + dy * cos(radians)
+            var left = -start.width * aspect / 2, right = start.width * aspect / 2
+            var top = -start.height / 2, bottom = start.height / 2
+            let smallestWidth = 0.1 * aspect, smallestHeight = 0.1
+            if [.topLeft, .left, .bottomLeft].contains(handle) { left = min(left + along, right - smallestWidth) }
+            if [.topRight, .right, .bottomRight].contains(handle) { right = max(right + along, left + smallestWidth) }
+            if [.topLeft, .top, .topRight].contains(handle) { top = min(top + across, bottom - smallestHeight) }
+            if [.bottomLeft, .bottom, .bottomRight].contains(handle) { bottom = max(bottom + across, top + smallestHeight) }
+            // The frame's new middle, turned back onto the photo.
+            let shiftX = (left + right) / 2, shiftY = (top + bottom) / 2
+            let centerX = start.midX * aspect + shiftX * cos(-radians) - shiftY * sin(-radians)
+            let centerY = start.midY + shiftX * sin(-radians) + shiftY * cos(-radians)
+            let width = right - left, height = bottom - top
+            return CGRect(x: (centerX - width / 2) / aspect, y: centerY - height / 2,
+                          width: width / aspect, height: height)
         }
-        if [.topLeft, .left, .bottomLeft].contains(handle) { minX = min(max(start.minX + dx, 0), maxX - smallest) }
-        if [.topRight, .right, .bottomRight].contains(handle) { maxX = max(min(start.maxX + dx, 1), minX + smallest) }
-        if [.topLeft, .top, .topRight].contains(handle) { minY = min(max(start.minY + dy, 0), maxY - smallest) }
-        if [.bottomLeft, .bottom, .bottomRight].contains(handle) { maxY = max(min(start.maxY + dy, 1), minY + smallest) }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        if handle == .middle {
+            // Moving keeps the size; it stops at the photo's edges.
+            let target = moved(1)
+            return TiltedCrop.fitted(target, degrees: angle, aspect: aspect)
+        }
+        if TiltedCrop.fits(moved(1), degrees: angle, aspect: aspect) { return moved(1) }
+        // As far along the drag as still fits.
+        var low = 0.0, high = 1.0
+        for _ in 0..<20 {
+            let middle = (low + high) / 2
+            if TiltedCrop.fits(moved(middle), degrees: angle, aspect: aspect) { low = middle } else { high = middle }
+        }
+        return TiltedCrop.fits(moved(low), degrees: angle, aspect: aspect) ? moved(low) : start
     }
 }
 

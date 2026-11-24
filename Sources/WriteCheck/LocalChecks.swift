@@ -447,3 +447,88 @@ func runRotationChecks() async throws {
     let lines = try await PageLayoutFinder.find(in: image).lines
     check("a sideways photo turned upright reads every line", lines.count == handwrittenLines.filter { !$0.isEmpty }.count)
 }
+
+/// The Straighten slider turns the crop frame over a still photo; the photo is turned and cut only once.
+func runTiltedCropChecks() throws {
+    print("\nStraightening with a turned frame")
+    let width = 900, height = 600
+    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    // A dark dot at (630, 210) from the top left; drawing coordinates start at the bottom left.
+    let dot = CGPoint(x: 630, y: 210)
+    context.setFillColor(CGColor(gray: 0, alpha: 1))
+    context.fillEllipse(in: CGRect(x: dot.x - 8, y: Double(height) - dot.y - 8, width: 16, height: 16))
+    let photo = context.makeImage()!
+    let aspect = Double(width) / Double(height)
+    for degrees in [-11.0, 7.5] {
+        // A frame centered on the dot.
+        let frame = CGRect(x: dot.x / Double(width) - 0.1, y: dot.y / Double(height) - 0.12, width: 0.2, height: 0.24)
+        let canvas = TiltedCrop.canvasCrop(frame, degrees: degrees, aspect: aspect)
+        let turned = PagePhoto.rotated(photo, degrees: degrees)!
+        let cut = turned.cropping(to: CGRect(x: canvas.minX * Double(turned.width), y: canvas.minY * Double(turned.height),
+                                             width: canvas.width * Double(turned.width),
+                                             height: canvas.height * Double(turned.height)).integral)!
+        let found = darkCenter(cut)
+        let middleX = found.x, middleY = found.y
+        check(String(format: "a frame turned %+.1f° cuts the spot it was centered on", degrees),
+              abs(middleX - 0.5) < 0.03 && abs(middleY - 0.5) < 0.03)
+        check(String(format: "the cut keeps the frame's size at %+.1f°", degrees),
+              abs(Double(cut.width) - 0.2 * Double(width)) < 3 && abs(Double(cut.height) - 0.24 * Double(height)) < 3)
+    }
+    let whole = CGRect(x: 0, y: 0, width: 1, height: 1)
+    check("an unturned frame is the crop itself", TiltedCrop.canvasCrop(whole, degrees: 0, aspect: aspect) == whole)
+    let fitted = TiltedCrop.fitted(whole, degrees: 6, aspect: aspect)
+    check("a turned whole-photo frame shrinks to stay inside the photo",
+          TiltedCrop.fits(fitted, degrees: 6, aspect: aspect) && fitted.width < 1 && fitted.width > 0.7)
+    let small = CGRect(x: 0.3, y: 0.3, width: 0.3, height: 0.3)
+    let kept = TiltedCrop.fitted(small, degrees: 6, aspect: aspect)
+    check("a frame that fits isn't changed", abs(kept.minX - small.minX) < 1e-9 && abs(kept.minY - small.minY) < 1e-9
+          && abs(kept.width - small.width) < 1e-9 && abs(kept.height - small.height) < 1e-9)
+
+    // The frame as drawn turns the way the photo will: a mark just inside its drawn top-left corner ends up
+    // in the top-left corner of the cut.
+    let frame = CGRect(x: 0.3, y: 0.25, width: 0.4, height: 0.5)
+    for degrees in [-12.0, 12.0] {
+        let corners = TiltedCrop.corners(frame, degrees: degrees, aspect: aspect)
+        let middle = CGPoint(x: frame.midX, y: frame.midY)
+        let mark = CGPoint(x: (corners[0].x * 0.85 + middle.x * 0.15) * Double(width),
+                           y: (corners[0].y * 0.85 + middle.y * 0.15) * Double(height))
+        let drawing = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        drawing.setFillColor(CGColor(gray: 1, alpha: 1))
+        drawing.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        drawing.setFillColor(CGColor(gray: 0, alpha: 1))
+        drawing.fillEllipse(in: CGRect(x: mark.x - 6, y: Double(height) - mark.y - 6, width: 12, height: 12))
+        let turned = PagePhoto.rotated(drawing.makeImage()!, degrees: degrees)!
+        let canvas = TiltedCrop.canvasCrop(frame, degrees: degrees, aspect: aspect)
+        let cut = turned.cropping(to: CGRect(x: canvas.minX * Double(turned.width), y: canvas.minY * Double(turned.height),
+                                             width: canvas.width * Double(turned.width),
+                                             height: canvas.height * Double(turned.height)).integral)!
+        let found = darkCenter(cut)
+        check(String(format: "the drawn frame turns the way the photo is turned (%+.0f°)", degrees),
+              abs(found.x - 0.075) < 0.03 && abs(found.y - 0.075) < 0.03)
+    }
+    let corner = TiltedCrop.fitted(CGRect(x: 0.75, y: 0.75, width: 0.3, height: 0.3), degrees: -9, aspect: aspect)
+    check("a frame past the edge is moved back inside", TiltedCrop.fits(corner, degrees: -9, aspect: aspect)
+          && abs(corner.width - 0.3) < 1e-9)
+}
+
+/// Where the dark pixels of an image sit, as fractions of its width and height from the top left.
+func darkCenter(_ image: CGImage) -> CGPoint {
+    let width = image.width, height = image.height
+    var gray = [UInt8](repeating: 255, count: width * height)
+    gray.withUnsafeMutableBytes { raw in
+        let drawing = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                                bitmapInfo: CGImageAlphaInfo.none.rawValue)!
+        drawing.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    var sumX = 0.0, sumY = 0.0, count = 0.0
+    for (index, value) in gray.enumerated() where value < 128 {
+        sumX += Double(index % width); sumY += Double(index / width); count += 1
+    }
+    guard count > 0 else { return CGPoint(x: -1, y: -1) }
+    return CGPoint(x: sumX / count / Double(width), y: sumY / count / Double(height))
+}

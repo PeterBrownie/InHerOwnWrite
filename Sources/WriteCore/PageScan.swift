@@ -382,3 +382,65 @@ extension PagePhoto {
         return output as Data
     }
 }
+
+/// A crop frame turned over a still photo by the Straighten slider. The crop is stored as an upright
+/// rectangle, normalized to the photo, whose center and size the frame keeps; the frame is drawn turned
+/// counterclockwise by the straightening angle, so that turning the photo clockwise by that angle makes it
+/// upright again. Only when the page is saved or shown as a result is the photo turned and cut, once.
+public enum TiltedCrop {
+    /// The frame's corners, normalized to the photo, starting at its top left and going clockwise.
+    /// `aspect` is the photo's width over its height; `degrees` is the clockwise turn that levels the page.
+    public static func corners(_ crop: CGRect, degrees: Double, aspect: Double) -> [CGPoint] {
+        let (cosine, sine) = turn(-degrees)
+        let center = CGPoint(x: crop.midX * aspect, y: crop.midY)
+        let halfWidth = crop.width * aspect / 2, halfHeight = crop.height / 2
+        return [(-halfWidth, -halfHeight), (halfWidth, -halfHeight), (halfWidth, halfHeight), (-halfWidth, halfHeight)]
+            .map { x, y in
+                CGPoint(x: (center.x + x * cosine - y * sine) / aspect, y: center.y + x * sine + y * cosine)
+            }
+    }
+
+    /// Whether the frame lies inside the photo at its angle.
+    public static func fits(_ crop: CGRect, degrees: Double, aspect: Double) -> Bool {
+        corners(crop, degrees: degrees, aspect: aspect).allSatisfy {
+            $0.x >= -1e-6 && $0.x <= 1 + 1e-6 && $0.y >= -1e-6 && $0.y <= 1 + 1e-6
+        }
+    }
+
+    /// The crop shrunk about its center, then moved, just enough that the turned frame stays inside the photo.
+    public static func fitted(_ crop: CGRect, degrees: Double, aspect: Double) -> CGRect {
+        guard abs(degrees) > 1e-9, aspect > 0 else { return crop.intersection(CGRect(x: 0, y: 0, width: 1, height: 1)) }
+        let (cosine, sine) = turn(degrees)
+        var halfWidth = crop.width * aspect / 2, halfHeight = crop.height / 2
+        var extentX = halfWidth * abs(cosine) + halfHeight * abs(sine)
+        var extentY = halfWidth * abs(sine) + halfHeight * abs(cosine)
+        let shrink = min(1, aspect / (2 * extentX), 1 / (2 * extentY))
+        halfWidth *= shrink; halfHeight *= shrink; extentX *= shrink; extentY *= shrink
+        let centerX = min(max(crop.midX * aspect, extentX), aspect - extentX)
+        let centerY = min(max(crop.midY, extentY), 1 - extentY)
+        return CGRect(x: (centerX - halfWidth) / aspect, y: centerY - halfHeight,
+                      width: 2 * halfWidth / aspect, height: 2 * halfHeight)
+    }
+
+    /// The same frame as an upright crop of the photo after `PagePhoto.rotated(_:degrees:)` has turned it
+    /// clockwise by `degrees`, for `PageFlattener.process`.
+    public static func canvasCrop(_ crop: CGRect, degrees: Double, aspect: Double) -> CGRect {
+        guard abs(degrees) > 1e-9 else { return crop }
+        let (cosine, sine) = turn(degrees)
+        let width = aspect, height = 1.0
+        let canvasWidth = width * abs(cosine) + height * abs(sine)
+        let canvasHeight = width * abs(sine) + height * abs(cosine)
+        let x = crop.midX * width - width / 2, y = crop.midY * height - height / 2
+        let centerX = canvasWidth / 2 + x * cosine - y * sine
+        let centerY = canvasHeight / 2 + x * sine + y * cosine
+        let frameWidth = crop.width * width, frameHeight = crop.height * height
+        return CGRect(x: (centerX - frameWidth / 2) / canvasWidth, y: (centerY - frameHeight / 2) / canvasHeight,
+                      width: frameWidth / canvasWidth, height: frameHeight / canvasHeight)
+    }
+
+    /// Cosine and sine of a clockwise turn on a picture whose y axis points down.
+    private static func turn(_ degrees: Double) -> (Double, Double) {
+        let radians = degrees * .pi / 180
+        return (cos(radians), sin(radians))
+    }
+}
