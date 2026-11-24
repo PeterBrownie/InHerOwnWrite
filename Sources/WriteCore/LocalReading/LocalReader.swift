@@ -102,11 +102,15 @@ public struct LocalReader: Sendable {
     let server: DecisionServer
     let candidates: CandidateMaker
     let settings: LocalReadSettings
+    /// Other spellings for a word that isn't in the dictionary, from macOS's spell checker.
+    let suggest: @Sendable (String) async -> [String]
 
-    public init(server: DecisionServer, candidates: CandidateMaker, settings: LocalReadSettings) {
+    public init(server: DecisionServer, candidates: CandidateMaker, settings: LocalReadSettings,
+                suggest: @escaping @Sendable (String) async -> [String] = { await SpellingSuggestions.guesses(for: $0) }) {
         self.server = server
         self.candidates = candidates
         self.settings = settings
+        self.suggest = suggest
     }
 
     public func read(jpeg: Data, report: @escaping @Sendable (LocalReadEvent) async -> Void) async throws -> LocalReadResult {
@@ -178,8 +182,11 @@ public struct LocalReader: Sendable {
 
                 // Whole-word question first.
                 let alternatives = word.alternatives.map { WordParts($0).core }.filter { !$0.isEmpty }
+                // Only a non-word gets the spell checker's guesses; changing one real word into another needs
+                // more evidence than the model's shape comparison gives.
+                let suggestions = candidates.isWord(parts.core) ? [] : await suggest(parts.core)
                 let spellings = candidates.wordOptions(reading: parts.core, alternatives: alternatives,
-                                                       limit: settings.wordOptions)
+                                                       suggestions: suggestions, limit: settings.wordOptions)
                 var core = parts.core
                 var confidence = 1.0
                 var compared = false

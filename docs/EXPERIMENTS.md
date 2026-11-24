@@ -118,6 +118,12 @@ read each line more than once, and their differences become options for the mode
 - **Apostrophes:** Vision often drops them or reads them as a letter, so contractions are offered as options:
   the same letters without the apostrophe, or one letter where the apostrophe goes. On the two real journal
   pages, Vision missed or misread 5 apostrophes; Quick restored all 5 and changed none that were right.
+- **The spell checker's guesses:** for a word Vision read that isn't in the dictionary, macOS's spell checker
+  (`NSSpellChecker`, its correction and guesses) is asked from the main thread before the word's question,
+  and up to three single-word guesses within two letters of the reading that are real words join the
+  spellings the model scores. Look-alikes only swap one letter for another, so a reading with a letter
+  missing or extra, like a dropped "c" in a long word, had no right option. The guesses are held to the
+  same switching rules as every other option (a change of length needs 1.4 times more).
 - **Re-checking corrections:** a changed word is scored again on four other crops (tighter, wider, shifted
   left and right) against Vision's reading and **Something else**, which scores a quarter of the page's
   typical good match. This confirmed genuine fixes, but it can't overturn a misreading the model makes
@@ -186,12 +192,6 @@ Not started. Listed so they aren't forgotten.
   word in the page text afterward, should outline that word on the photo, using the word box from the
   reading. For the page view this means saving each word's box with the page (with the word notes), and
   the photo pane needs the same straightened, flattened image the boxes were measured on.
-- **Offer autocorrect's suggestions as options.** For a word that isn't in the dictionary, ask macOS's spell
-  checker (`NSSpellChecker` guesses and its correction, which work on the Mac) for suggestions and add them
-  to the spellings the model scores. Today, options only come from Vision's other readings and swapping one
-  look-alike letter, so a reading with a missing or extra letter, like a dropped "c" in a long word, can't
-  be fixed. The suggestions would be held to the same rules as other options. The spell checker is meant
-  to be used from the main thread, so gather the suggestions there for each word before its question.
 - **Catch scribbles drawn as loose coils.** The solid-core test misses them; they look like letters by fill
   and solidity. Stroke crossings per area, or the share of the blot that Vision reads as no text, might
   separate them.

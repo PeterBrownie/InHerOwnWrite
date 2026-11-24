@@ -119,14 +119,16 @@ public struct CandidateMaker: Sendable {
     }
 
     /// Vision's reading first, then its other readings, then contractions it may have read without the
-    /// apostrophe, then real words a single look-alike away.
-    public func wordOptions(reading: String, alternatives: [String], limit: Int) -> [String] {
+    /// apostrophe, then the spell checker's guesses that are real words, then real words a single look-alike
+    /// away.
+    public func wordOptions(reading: String, alternatives: [String], suggestions: [String] = [], limit: Int) -> [String] {
         var options = [reading]
         func add(_ word: String) {
             if options.count < limit, !word.isEmpty, !options.contains(word) { options.append(word) }
         }
         alternatives.forEach(add)
         Self.apostropheOptions(for: reading).forEach(add)
+        suggestions.filter(isWord).forEach(add)
         let characters = Array(reading)
         for (index, character) in characters.enumerated() where character.isLetter {
             for alternative in Self.letterOptions(for: character, limit: 12).dropFirst() {
