@@ -161,6 +161,46 @@ Not started. Listed so they aren't forgotten.
   or show-through out of the tint.
 - **Test Clef-flash (9B) against MiniCPM-OCR-Jev.** Clef-flash reads images and scores many options in one
   pass, which could replace one request per option. Compare speed, memory, and accuracy on the same pages.
+- **Resume a local reading after quitting.** Today, quitting, sleep, or the idle lock stops a reading and
+  loses that page's progress: the words decided so far and any fixes made in the reading window. The page
+  goes back to waiting and must be read again from the start. Instead, save progress with the page,
+  encrypted, as each line finishes: the decided words with their confidence and notes, and her fixes. When
+  the page is read again, find the lines (about 5 seconds; the same photo gives the same layout) and skip
+  every word already decided. If the layout no longer matches, for example because the photo was
+  replaced, start over.
+- **Remove a word that isn't on the page while reading.** In the reading window's text so far, clicking a
+  word, emptying the field, and choosing Fix (shown as Remove when empty) should drop the word. Until the
+  page is saved, show it struck through with a Restore button. When saving, drop emptied words, and move
+  notes on later words in the same line back by one so their highlights stay on the right word.
+- **Show a clicked word on the page photo.** Clicking a word in the reading window's text so far, or a marked
+  word in the page text afterward, should outline that word on the photo, using the word box from the
+  reading. For the page view this means saving each word's box with the page (with the word notes), and
+  the photo pane needs the same straightened, flattened image the boxes were measured on.
+- **Offer autocorrect's suggestions as options.** For a word that isn't in the dictionary, ask macOS's spell
+  checker (`NSSpellChecker` guesses and its correction, which work on the Mac) for suggestions and add them
+  to the spellings the model scores. Today, options only come from Vision's other readings and swapping one
+  look-alike letter, so a reading with a missing or extra letter, like a dropped "c" in a long word, can't
+  be fixed. The suggestions would be held to the same rules as other options. The spell checker is meant
+  to be used from the main thread, so gather the suggestions there for each word before its question.
 - **Catch scribbles drawn as loose coils.** The solid-core test misses them; they look like letters by fill
   and solidity. Stroke crossings per area, or the share of the blot that Vision reads as no text, might
   separate them.
+
+## Known issues
+
+- **The update bar bleeds into the sidebar's title bar.** The bar is attached to the top of the whole
+  window (a top safe-area inset on the root view). In the library's split view, its background fills the
+  title bar area behind the window buttons and across the sidebar, and it overlaps the sidebar's
+  "Journals" header, so the sidebar's top looks tinted. Seen in dark mode, with the build from before the
+  switch to green. Likely fix: show the bar inside the detail column only, below its toolbar, or as a
+  title bar accessory, rather than over the whole window.
+- **The Straighten slider lags badly.** Every step of the slider decodes the full prepared photo (up to
+  2400 px), rotates it, and builds a new preview, and each step starts its own task without cancelling the
+  last; in Result view each step also re-crops and re-flattens. Preferred fix: leave the photo still and
+  turn the crop frame instead. The crop becomes a rectangle at an angle over the photo, with the area
+  outside it darkened, so dragging the slider only redraws the frame and costs nothing. The photo is turned
+  and cut once, when the page is saved or Result is shown. Dragging an edge then moves it along the frame's
+  own tilted sides, and the frame must stay inside the photo at its angle. Quarter turns could stay as they
+  are, turning the photo, so a sideways page is shown upright. Fallback fix: turn the preview with a view
+  rotation while dragging, render once when the drag ends from a small copy (about 1000 px), and cancel
+  renders a newer step replaces.

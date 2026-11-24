@@ -54,6 +54,8 @@ journal's name.
 - **Crop.** The app finds the page being added and darkens everything else: the table, and any strip of
   the facing page past the fold. Drag the edges or corners to adjust it, or drag inside to move it. Only
   the bright part is saved and read.
+- **Turn.** The rotate buttons turn a sideways photo a quarter turn and look for the page again;
+  **Straighten** levels a tilted page by up to 15°.
 - **Flatten curved pages.** On by default. Lines of writing that bend toward the fold or slope across the
   photo are straightened before the page is saved. **Result** shows exactly what will be saved and read.
 - **Page number.** A number printed or written alone at the top or bottom of the page fills in the page
@@ -68,7 +70,8 @@ page. A page that can't be read keeps its photo and can be retried.
   part of a page or run across several. A date written without a year takes its year from nearby entries.
   Editing a date line in the text updates the entry.
 - **Reading controls.** Show or hide the photo, show one page or two, and flip with ⌘[ and ⌘]. Accurate
-  Line Breaks (View menu or Settings) shows lines as written; turn it off to read flowing paragraphs.
+  Line Breaks (View menu or Settings) shows lines as written; turn it off to read flowing paragraphs. Text
+  can be edited either way; with line breaks off, each change is made to the text as written.
 - **Analysis.** Choose journals and page ranges, see top words (hide any you don't want), the names Claude
   found, and how often any word or name appears over time.
 
@@ -93,7 +96,15 @@ page is read without leaving the Mac, and the **Reading on This Mac** window (�
    right), against Vision's reading and **Something else**. Something else wins when neither spelling
    matches as well as a quarter of a typical good match on the page; then Vision's reading stays, marked
    as a close call.
+   Contractions Vision read without their apostrophe ("didnt") are offered with it. Writing scribbled out
+   with solid ink is found from the ink itself and becomes "###", as in readings from Claude.
 3. The text is saved to the page like any other reading. Date lines become entries, but names aren't found.
+
+**Fixing words.** In the page text, words the model wasn't sure of are highlighted green, and words it
+changed are underlined (**View → Show Reading Confidence** turns this off). Click one to see what Vision
+first read, pick another spelling, keep it, or type a correction. In the reading window, any word already
+decided can be clicked and fixed while the rest of the page is still being read; the fixes are saved with
+the page.
 
 It needs llama.cpp (`brew install llama.cpp`) and a one-time 2.7 GB model download from Hugging Face. On an
 M3 Pro, finding the lines takes about 5 seconds and each decision about 170 ms. **Quick** reads a short
@@ -133,3 +144,9 @@ complete backup, and it stays encrypted in Time Machine or anywhere else.
 `swift run WriteCheck` tests the encryption, database, photo cleanup, and API handling with synthetic
 pages and a stubbed network. It sends nothing to Anthropic. With `ANTHROPIC_API_KEY` set,
 `swift run WriteCheck --live` reads one invented handwritten page through the real API.
+
+## For developers
+
+`CLAUDE.md` covers building, the checks, where things are, and the rules for this public repository.
+`docs/EXPERIMENTS.md` records what has been tried for reading on the Mac, what was kept and why, and the
+lists of future ideas and known issues.
