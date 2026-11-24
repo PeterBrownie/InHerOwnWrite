@@ -38,6 +38,25 @@ public struct PageLayout: Sendable, Equatable {
         }
     }
 
+    /// Each line's own band of the page: from halfway to the line above to halfway to the line below. Vision's
+    /// word boxes on handwriting run well into the neighboring lines (on a real ruled page they were 1.6 line
+    /// spacings tall), so a word's ink is looked for only inside its line's band.
+    public static func lineBands(_ lines: [CGRect]) -> [ClosedRange<Double>] {
+        let centers = lines.map(\.midY)
+        return centers.indices.map { index in
+            let top = index > 0 ? (centers[index - 1] + centers[index]) / 2 : lines[index].minY
+            let bottom = index < centers.count - 1 ? (centers[index] + centers[index + 1]) / 2 : lines[index].maxY
+            return min(top, bottom)...max(top, bottom)
+        }
+    }
+
+    /// A word's box cut down to its line's band.
+    public static func clip(_ box: CGRect, to band: ClosedRange<Double>) -> CGRect {
+        let top = max(box.minY, band.lowerBound), bottom = min(box.maxY, band.upperBound)
+        guard bottom > top else { return box }
+        return CGRect(x: box.minX, y: top, width: box.width, height: bottom - top)
+    }
+
     /// Identifies a layout, so a reading saved partway can tell whether it still lines up with the page.
     public var key: String {
         lines.map { line in

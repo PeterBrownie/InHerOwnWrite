@@ -588,13 +588,15 @@ struct PageOverlay: View {
     /// Ink to color as words are decided: words the model changed, and words it wasn't sure of.
     private var tintRegions: [InkTint.Region] {
         guard model.showConfidence else { return [] }
-        return session.lines.flatMap { line in
+        let bands = PageLayout.lineBands(session.lineBoxes)
+        return session.lines.enumerated().flatMap { index, line in
             line.compactMap { word -> InkTint.Region? in
                 guard let confidence = word.confidence, !word.removed, !word.edited,
                       word.changed || confidence < LocalReader.closeCall
                 else { return nil }
                 let color = word.changed ? InkTint.changed : InkTint.closeCall
-                return InkTint.Region(box: word.box, red: color.red, green: color.green, blue: color.blue)
+                let box = bands.indices.contains(index) ? PageLayout.clip(word.box, to: bands[index]) : word.box
+                return InkTint.Region(box: box, red: color.red, green: color.green, blue: color.blue)
             }
         }
     }
@@ -693,7 +695,9 @@ struct PageOverlay: View {
         }
         // The word clicked in the text so far.
         if let selected = session.selected, let word = session.lines[safe: selected.line]?[safe: selected.word] {
-            let outline = Path(roundedRect: rect(word.box).insetBy(dx: -4, dy: -4), cornerRadius: 4)
+            let bands = PageLayout.lineBands(session.lineBoxes)
+            let box = bands.indices.contains(selected.line) ? PageLayout.clip(word.box, to: bands[selected.line]) : word.box
+            let outline = Path(roundedRect: rect(box).insetBy(dx: -4, dy: -4), cornerRadius: 4)
             context.stroke(outline, with: .color(.white.opacity(0.9)), lineWidth: 4)
             context.stroke(outline, with: .color(.blue), lineWidth: 2)
         }

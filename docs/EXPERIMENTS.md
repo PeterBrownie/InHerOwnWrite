@@ -166,8 +166,11 @@ ignored. Scribbles become "###", as in readings from Claude.
   red for words the model changed and green for close calls, in the page view and live in the reading
   window. Within the word's outline, a pixel is ink when it is darker than 55% of the way from the paper
   (the 75th percentile of the outline) to the pen (the 2nd percentile), so faint show-through and the facing
-  page's ink stay uncolored. Outlines are Vision's word boxes; on the invented pages they held each word's
-  ink without catching neighbors. Not yet judged on cursive.
+  page's ink stay uncolored. Vision's word boxes on handwriting run into the neighboring lines (on the real
+  ruled page they were 1.6 line spacings tall), so each box is first cut to its line's band, from halfway to
+  the line above to halfway to the line below; the outline saved with a note is cut the same way. On the
+  three real pages, every word had at least half its ink tinted (median 91 to 100%, lowest 52%), and the
+  printed ruling and show-through stayed clear. Not yet tried on joined-up cursive.
 - With Accurate Line Breaks off, edits made to the flowing paragraphs are carried back to the text as written,
   so line breaks stay as she wrote them.
 

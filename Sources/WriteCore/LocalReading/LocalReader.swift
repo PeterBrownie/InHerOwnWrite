@@ -184,6 +184,7 @@ public struct LocalReader: Sendable {
             await report(.resumed(resume))
         }
 
+        let bands = PageLayout.lineBands(layout.lines.map(\.box))
         var questionID = 0
         var lines: [String] = progress.lines.map { $0.map(\.text).joined(separator: " ") }
         // How well the best spelling of each word matched, so "Something else" can be judged against what
@@ -361,7 +362,7 @@ public struct LocalReader: Sendable {
                         .map { parts.joined(core: $0.key) }
                     notes.append(WordNote(line: lineIndex, word: wordIndex, text: text, read: word.text,
                                           options: Array(options), confidence: confidence,
-                                          outline: layout.photoOutline(of: word.box)))
+                                          outline: layout.photoOutline(of: PageLayout.clip(word.box, to: bands[lineIndex]))))
                 }
                 words.append(text)
                 decided.append(.init(text: text, confidence: confidence, changed: core != parts.core))
