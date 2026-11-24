@@ -44,15 +44,22 @@ cat > "$staged/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-# Lets the app update itself: the commit it was built from, and where this copy of the code lives.
+# Lets the app update itself: the commit it was built from, where this copy of the code lives (so this Mac
+# can build updates), and the GitHub repository (so a copy sent to another Mac can download them).
+# --release is for GitHub's build, whose copy of the code is thrown away afterward.
 if commit="$(git rev-parse HEAD 2>/dev/null)"; then
   plutil -insert InHerOwnWriteCommit -string "$commit" "$staged/Contents/Info.plist"
-  plutil -insert InHerOwnWriteSource -string "$PWD" "$staged/Contents/Info.plist"
+  [[ "$1" == "--release" ]] || plutil -insert InHerOwnWriteSource -string "$PWD" "$staged/Contents/Info.plist"
+fi
+repository="${GITHUB_REPOSITORY:-$(git remote get-url origin 2>/dev/null)}"
+repository="${${repository%.git}##*github.com[:/]}"
+if [[ "$repository" =~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ]]; then
+  plutil -insert InHerOwnWriteRepository -string "$repository" "$staged/Contents/Info.plist"
 fi
 codesign --force --sign - "$staged" >/dev/null 2>&1
 
 # The app's updater builds here while it keeps running, then swaps the new copy in itself.
-if [[ "$1" == "--stage-only" ]]; then
+if [[ "$1" == "--stage-only" || "$1" == "--release" ]]; then
   echo "Built $staged"
   exit 0
 fi

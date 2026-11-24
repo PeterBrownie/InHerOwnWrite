@@ -5,43 +5,46 @@ library. The name nods to *In His Own Write*, John Lennon's 1964 book of stories
 
 ## Start
 
-1. On a Mac that has the code, double-click `Start In Her Own Write.command`. It builds the app and
-   installs it in `~/Applications`.
-2. To give it to someone else, zip that app (Control-click it, then **Compress**) and AirDrop the zip.
-   They move the app into Applications and open it. The first time, macOS blocks it because it isn't
-   from the App Store. Open **System Settings → Privacy & Security**, scroll down, and click
-   **Open Anyway**.
+1. Download `In-Her-Own-Write.zip` from the repository's latest release
+   (`https://github.com/PeterBrownie/InHerOwnWrite/releases/latest/download/In-Her-Own-Write.zip`), or have
+   someone AirDrop you the app. Unzip it if needed and move the app into Applications.
+2. The first time, macOS blocks it because it isn't from the App Store. Open **System Settings → Privacy &
+   Security**, scroll down, and click **Open Anyway**. Updates after that open without asking.
 3. Choose a password and write down the recovery key.
 4. Paste an Anthropic API key from [console.anthropic.com](https://console.anthropic.com).
+
+On a Mac that has the code, double-clicking `Start In Her Own Write.command` builds the app instead and
+installs it in `~/Applications`.
 
 The app works on Apple silicon Macs running macOS 15 or later. Journals live in that Mac's
 Application Support folder, not inside the app, so replacing the app with a newer one keeps them.
 
 ## Updates
 
-An app installed from a copy of this repository keeps itself current. Each time it opens, it checks the
-repository's GitHub branch. If there are newer commits, a bar says **There has been an update.** with
-**Update & Restart** and **Ignore**. Meanwhile, with the app still open and usable, the new version is
-pulled and built in the background, which takes about a minute. Update & Restart waits for that build if
-it isn't done, then quits, swaps the new copy in, and reopens, which takes a few seconds. Ignore hides the
-bar until the next launch. **In Her Own Write → Check for Updates…** checks right away.
+The app keeps itself current. Each time it opens, it checks GitHub. If there is a newer version, a bar says
+**There has been an update.** with **Update & Restart** and **Ignore**. Meanwhile, with the app still open
+and usable, the new version is made ready in the background. Update & Restart waits for it if it isn't
+done, then quits, swaps the new copy in, and reopens, which takes a few seconds. Ignore hides the bar until
+the next launch. **In Her Own Write → Check for Updates…** checks right away.
 
-To set up a Mac to receive updates:
+Where the new version comes from depends on how the app was installed:
 
-1. Install Apple's Command Line Tools (`xcode-select --install`).
-2. For a private repository, give that Mac a read-only deploy key, so it needs no GitHub account: run
-   `ssh-keygen -t ed25519 -N "" -f ~/.ssh/in_her_own_write` on it, add the `.pub` file's contents under the
-   repository's **Settings → Deploy keys**, and add to `~/.ssh/config`:
-   `Host github.com` / `IdentityFile ~/.ssh/in_her_own_write`.
-3. Clone the repository, for example `git clone git@github.com:<you>/<repo>.git ~/In-Her-Own-Write`
-   (or the `https://` address for a public repository).
-4. Double-click `Start In Her Own Write.command` in that folder once.
+- **Downloaded or AirDropped.** Every push to `main` is built by GitHub (`.github/workflows/release.yml`),
+  which runs the offline checks and publishes the app as the latest release. The app downloads it, checks
+  that it is this app, unchanged since it was signed, and matches GitHub's checksum, then swaps it in. The
+  app has to be somewhere it can replace itself, such as Applications; one opened straight from Downloads
+  asks to be moved first.
+- **Built from the code.** An app built with `Start In Her Own Write.command` from a clone of the
+  repository pulls the new commits and builds them on that Mac, which takes about a minute. To set this
+  up: install Apple's Command Line Tools (`xcode-select --install`), clone the repository, and
+  double-click `Start In Her Own Write.command` once. If that clone or the tools go away, the app falls back
+  to downloading releases.
 
-The app never asks for a password and never touches the keychain; without access, it skips the update.
-
-After that, pushing to the branch is enough. Updates only move forward: a copy with unpushed commits, or
-one that can't fast-forward, keeps its current version. If a pull or build fails, the installed version
-stays, and the details are in `~/Library/Logs/In Her Own Write/update.log`.
+Updates only move forward: a copy built from commits GitHub doesn't have, or newer than the latest release,
+keeps its current version. The app never asks for a password and never touches the keychain. If anything
+fails, the installed version stays, and the details are in `~/Library/Logs/In Her Own Write/update.log`.
+A copy installed before releases existed doesn't know where to download from; replace it once with a
+download.
 
 Anyone who can push to the repository can change the app that opens her journal, so keep it to accounts
 you trust, with two-factor sign-in. The repository's `.gitignore` keeps photos and databases out of it.

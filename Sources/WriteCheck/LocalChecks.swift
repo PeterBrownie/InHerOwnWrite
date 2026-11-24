@@ -345,6 +345,57 @@ func runUpdaterChecks() {
           && Updater.helperScript.contains("open \"$app\""))
 }
 
+/// Updates from GitHub's releases, for a Mac that was sent the app: reading GitHub's answers, and checking a
+/// download before it's installed. Nothing here goes online.
+func runReleaseUpdateChecks() {
+    print("\nUpdates from releases")
+    let release = #"""
+        {"tag_name": "build-12.1", "draft": false, "prerelease": false, "assets": [
+          {"name": "notes.txt", "browser_download_url": "https://example.invalid/notes.txt"},
+          {"name": "In-Her-Own-Write.zip", "browser_download_url": "https://example.invalid/build-12.1/In-Her-Own-Write.zip",
+           "digest": "sha256:abc123"}]}
+        """#
+    let parsed = Updater.parseRelease(Data(release.utf8))
+    check("reads the latest release", parsed?.tag == "build-12.1" && parsed?.digest == "sha256:abc123"
+          && parsed?.download.absoluteString == "https://example.invalid/build-12.1/In-Her-Own-Write.zip")
+    check("ignores a release without the app",
+          Updater.parseRelease(Data(release.replacingOccurrences(of: "In-Her-Own-Write.zip\",", with: "Other.zip\",").utf8)) == nil)
+    check("ignores a draft", Updater.parseRelease(Data(release.replacingOccurrences(of: #""draft": false"#, with: #""draft": true"#).utf8)) == nil)
+    check("ignores a download that isn't https",
+          Updater.parseRelease(Data(release.replacingOccurrences(of: "https://example.invalid/build", with: "http://example.invalid/build").utf8)) == nil)
+    check("reads GitHub's comparison", Updater.parseCompareStatus(Data(#"{"status": "ahead", "ahead_by": 3}"#.utf8)) == "ahead")
+    check("knows a repository name", Updater.isRepositoryName("Someone/Some-Repo.2")
+          && !Updater.isRepositoryName("a/b/c") && !Updater.isRepositoryName("a") && !Updater.isRepositoryName("a b/c"))
+
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("release-check-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    check("a copy sent to another Mac updates from releases",
+          Updater.channel(commit: "abc1234", source: root.appendingPathComponent("gone"), repository: "Someone/Repo") == .releases("Someone/Repo"))
+    check("a build that doesn't know its commit doesn't update",
+          Updater.channel(commit: nil, source: nil, repository: "Someone/Repo") == nil)
+    check("an app still in its download spot asks to be moved",
+          Updater.installProblem(for: URL(fileURLWithPath: "/private/var/folders/x/AppTranslocation/ABC/d/In Her Own Write.app")) != nil)
+    check("an app in a folder it can write to can replace itself",
+          Updater.installProblem(for: root.appendingPathComponent("In Her Own Write.app")) == nil)
+
+    // A stand-in app, signed the way the release build signs it.
+    let app = root.appendingPathComponent("In Her Own Write.app")
+    let contents = app.appendingPathComponent("Contents")
+    try? FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(at: contents.appendingPathComponent("Resources"), withIntermediateDirectories: true)
+    try? FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: contents.appendingPathComponent("MacOS/InHerOwnWrite").path)
+    try? Data("icon".utf8).write(to: contents.appendingPathComponent("Resources/AppIcon.icns"))
+    let info: NSDictionary = ["CFBundleIdentifier": "local.inherownwrite.journal", "CFBundleExecutable": "InHerOwnWrite",
+                              "CFBundlePackageType": "APPL", "InHerOwnWriteCommit": "abc1234"]
+    info.write(to: contents.appendingPathComponent("Info.plist"), atomically: true)
+    Updater.run("/usr/bin/codesign", ["--force", "--sign", "-", app.path], timeout: 60)
+    check("accepts a signed copy of the app", Updater.checkDownloadedApp(app, identifier: "local.inherownwrite.journal") == nil)
+    check("refuses a different app", Updater.checkDownloadedApp(app, identifier: "some.other.app") != nil)
+    try? Data("changed".utf8).write(to: contents.appendingPathComponent("Resources/AppIcon.icns"))
+    check("refuses a copy changed after signing", Updater.checkDownloadedApp(app, identifier: "local.inherownwrite.journal") != nil)
+}
+
 private func isNewer(_ result: Result<Bool, Updater.CheckError>?) -> Bool? {
     if case .success(let newer) = result { return newer }
     return nil

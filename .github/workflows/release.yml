@@ -1,0 +1,46 @@
+# Builds the app on every push and runs the offline checks. On `main`, the build is published as the
+# repository's latest release, which copies of the app on Macs without the code download as their update.
+name: Build and release
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  # A newer push to the same branch replaces a build still running, so the latest release is the newest.
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show the Swift version
+        run: swift --version
+
+      - name: Run the offline checks
+        run: swift run WriteCheck
+
+      - name: Build the app
+        run: ./"Start In Her Own Write.command" --release
+
+      - name: Package it
+        run: |
+          codesign --verify --deep --strict ".build/In Her Own Write.app"
+          ditto -c -k --keepParent ".build/In Her Own Write.app" In-Her-Own-Write.zip
+
+      - name: Publish the release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" In-Her-Own-Write.zip \
+            --target "$GITHUB_SHA" --latest \
+            --title "In Her Own Write, build ${GITHUB_RUN_NUMBER}" \
+            --notes "Built from ${GITHUB_SHA}. Download In-Her-Own-Write.zip, unzip it, and move the app into Applications. The first time, open System Settings → Privacy & Security and click Open Anyway. After that it updates itself."

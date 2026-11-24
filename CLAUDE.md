@@ -62,6 +62,9 @@ keep it from changing real words into non-words. Details and the reasons are in 
 
 ## Updates
 
-Pushing to `main` is a release. Installed apps check GitHub on launch; if their build commit is behind,
-they build the new version in the background and show **There has been an update.** with Update & Restart
-and Ignore. Keep `main` building and `swift run WriteCheck` passing before every push.
+Pushing to `main` is a release. `.github/workflows/release.yml` runs the checks on GitHub's Macs and
+publishes the app as the latest release (`In-Her-Own-Write.zip`). Installed apps check GitHub on launch; if
+their build commit is behind, they get the new version in the background and show **There has been an
+update.** with Update & Restart and Ignore. An app built here from the code builds the update from its clone;
+any other copy downloads the latest release. Keep `main` building and `swift run WriteCheck` passing before
+every push.

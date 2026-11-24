@@ -828,6 +828,7 @@ if arguments.contains("--local") {
             try await runPageScanChecks()
             try await runFlattenChecks()
             runUpdaterChecks()
+            runReleaseUpdateChecks()
         } catch {
             failures += 1
             print("  FAIL  stopped early: \(error)")

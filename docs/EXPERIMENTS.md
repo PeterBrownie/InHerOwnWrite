@@ -211,6 +211,11 @@ ignored. Scribbles become "###", as in readings from Claude.
 - The update check never uses the keychain: with the keychain, git asked for permission every launch. A
   private repository needs a read-only deploy key on each Mac; the repository was made public instead, with
   its history started fresh.
+- A copy of the app sent to another Mac (AirDrop or download) updates from GitHub's releases instead of
+  building from a clone: GitHub builds and checks every push to `main`, and the app downloads the zip,
+  checks its bundle identifier, code signature, and GitHub's checksum, and swaps it in. A Mac that was sent
+  the app needs no developer tools, no clone, and no build that could fail where nobody can see why. Macs
+  with a clone keep building updates themselves.
 
 ## Future ideas
 
