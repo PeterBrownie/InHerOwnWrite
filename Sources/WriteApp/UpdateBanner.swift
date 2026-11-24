@@ -12,12 +12,17 @@ public struct UpdateBanner: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 18))
-                .foregroundStyle(isFailure ? Color.orange : Theme.accent)
+                .foregroundStyle(isFailure ? Theme.highlight : Theme.accent)
+            // One line each, never wrapping: a bar that can grow taller makes the whole window grow when
+            // SwiftUI works out the window's smallest size.
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 14, weight: .semibold))
+                Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 Text(detail).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(detail)
             }
+            .layoutPriority(1)
             Spacer(minLength: 12)
             if updater.state == .preparing && updater.restartWhenReady {
                 ProgressView().controlSize(.small)
@@ -33,7 +38,8 @@ public struct UpdateBanner: View {
             Button("Ignore") { updater.ignore() }
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 10)
+        .frame(height: 56)
+        .frame(maxWidth: .infinity)
         .background(Theme.notice)
         .overlay(alignment: .bottom) { Divider() }
     }

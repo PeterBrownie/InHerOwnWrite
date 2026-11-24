@@ -131,7 +131,7 @@ ignored. Scribbles become "###", as in readings from Claude.
 ## Fixing words
 
 - After a local reading, words the model changed are underlined and words it wasn't sure of are highlighted
-  orange (View → Show Reading Confidence). Clicking one offers the other spellings it weighed, Keep, or Type a
+  green (View → Show Reading Confidence). Clicking one offers the other spellings it weighed, Keep, or Type a
   Correction. The notes are saved with the page and drop off once the word is changed.
 - Words can also be fixed in the reading window while the page is still being read; the fixes are applied
   when the page is saved.
@@ -146,3 +146,21 @@ ignored. Scribbles become "###", as in readings from Claude.
 - The update check never uses the keychain: with the keychain, git asked for permission every launch. A
   private repository needs a read-only deploy key on each Mac; the repository was made public instead, with
   its history started fresh.
+
+## Future ideas
+
+Not started. Listed so they aren't forgotten.
+
+- **Color the handwriting itself by confidence.** Instead of underlining words in the text, recolor the ink in
+  the page photo: within each word's box (straightened and flattened, as the reader sees it), find the pixels
+  that are ink for that word (the same ink threshold the scribble and pitch finders use, limited to the word's
+  line band so neighbors' ascenders and descenders aren't caught), and tint them with the confidence color:
+  green for close calls, the accent color for words the model changed. Shown over the page photo in the
+  reader and the reading window, with the same toggle as Show Reading Confidence. Open questions: whether the
+  word boxes from strip reading are tight enough on cursive, and how to keep faint ink from the facing page
+  or show-through out of the tint.
+- **Test Clef-flash (9B) against MiniCPM-OCR-Jev.** Clef-flash reads images and scores many options in one
+  pass, which could replace one request per option. Compare speed, memory, and accuracy on the same pages.
+- **Catch scribbles drawn as loose coils.** The solid-core test misses them; they look like letters by fill
+  and solidity. Stroke crossings per area, or the share of the blot that Vision reads as no text, might
+  separate them.

@@ -507,6 +507,10 @@ func runRender(output: URL, sample: URL?) async throws {
     let spreadScan = await PageScan.analyze(jpeg: spread)
     await render(CropEditor(image: NSImage(data: spread)!, crop: .constant(spreadScan.crop)).padding(10),
                  size: CGSize(width: 520, height: 460), to: output.appendingPathComponent("4c-crop.png"))
+    _ = model.createJournal(name: "Spread Test")
+    await render(UploadSheet(preloaded: spread).environmentObject(model), size: CGSize(width: 820, height: 600),
+                 to: output.appendingPathComponent("4d-upload-with-photo.png"))
+    if let made = model.journals.first(where: { $0.name == "Spread Test" }) { model.deleteJournal(id: made.id) }
 
     let photo = try sample.map { try PagePhoto.prepare(try Data(contentsOf: $0)) }
         ?? PagePhoto.prepare(handwrittenPage())
@@ -784,6 +788,8 @@ if arguments.contains("--local") {
             runSwitchRuleChecks()
             try runEditingChecks(in: directory)
             try await runScribbleChecks()
+            await MainActor.run { runBannerChecks() }
+            try await runRotationChecks()
             try await runPageScanChecks()
             try await runFlattenChecks()
             runUpdaterChecks()

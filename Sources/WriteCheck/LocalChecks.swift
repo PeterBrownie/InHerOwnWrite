@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -408,4 +409,41 @@ func runScribbleChecks() async throws {
     check("marks the crossed-out word with ###", marked.count == 1 && marked.first?.hasPrefix(Scribbles.mark) == true)
     check("marks nothing else", lines.joined(separator: " ").components(separatedBy: Scribbles.mark).count == 2)
     if marked.count != 1 { lines.forEach { print("        | \($0)") } }
+}
+
+/// The update bar must not ask for more height than a bar needs, or the window grows to fit it.
+@MainActor
+func runBannerChecks() {
+    print("\nUpdate bar")
+    for state in [Updater.State.preparing, .ready, .failed("The new version didn't build.")] {
+        // SwiftUI asks how tall the bar is at small widths when working out the window's minimum size.
+        let controller = NSHostingController(rootView: UpdateBanner(updater: .preview(state)))
+        let narrow = controller.sizeThatFits(in: CGSize(width: 60, height: 100_000))
+        let natural = controller.sizeThatFits(in: CGSize(width: 1240, height: 100_000))
+        print(String(format: "        %@: %.0f tall at full width, %.0f tall when squeezed", "\(state)", natural.height, narrow.height))
+        check("the update bar stays a bar (\(state))", natural.height < 90 && narrow.height < 90)
+    }
+}
+
+func runRotationChecks() async throws {
+    print("\nTurning photos")
+    let crop = CGRect(x: 0.1, y: 0.2, width: 0.5, height: 0.6)
+    check("four quarter turns bring a crop back", PagePhoto.rotatedCrop(crop, quarters: 4) == crop
+          && abs(PagePhoto.rotatedCrop(PagePhoto.rotatedCrop(crop, quarters: 1), quarters: -1).minX - crop.minX) < 1e-9)
+    let quarter = PagePhoto.rotatedCrop(crop, quarters: 1)
+    check("a quarter turn moves the crop with the photo", abs(quarter.minX - 0.2) < 1e-9 && abs(quarter.minY - 0.1) < 1e-9
+          && abs(quarter.width - 0.6) < 1e-9 && abs(quarter.height - 0.5) < 1e-9)
+
+    let jpeg = try PagePhoto.prepare(handwrittenPage())
+    let upright = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(jpeg as CFData, nil)!, 0, nil)!
+    let sideways = try PagePhoto.rotated(jpeg, degrees: -90)
+    let turned = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(sideways as CFData, nil)!, 0, nil)!
+    check("a quarter turn swaps width and height", turned.width == upright.height && turned.height == upright.width)
+    let tilted = PagePhoto.rotated(upright, degrees: 4)!
+    check("a small turn keeps every corner", tilted.width > upright.width && tilted.height > upright.height)
+    // A page photographed sideways, turned back by the same quarter turn, reads like the upright page.
+    let restored = try PageFlattener.process(sideways, crop: PageScanResult.whole.crop, flatten: false, rotation: 90)
+    let image = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(restored as CFData, nil)!, 0, nil)!
+    let lines = try await PageLayoutFinder.find(in: image).lines
+    check("a sideways photo turned upright reads every line", lines.count == handwrittenLines.filter { !$0.isEmpty }.count)
 }

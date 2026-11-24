@@ -317,7 +317,7 @@ private struct StatusIcon: View {
         case .done: EmptyView()
         case .reading: ProgressView().controlSize(.mini)
         case .waiting: Image(systemName: "clock").foregroundStyle(.secondary).help("Waiting to be read")
-        case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).help("Couldn't be read")
+        case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.highlight).help("Couldn't be read")
         }
     }
 }
@@ -375,7 +375,7 @@ struct MovePageSheet: View {
             }
             if isTaken {
                 Label("That page number is already used.", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.highlight)
             }
             HStack {
                 Spacer()

@@ -338,7 +338,7 @@ public enum Straightener {
         return context.makeImage()
     }
 
-    private static func edgeColor(_ image: CGImage) -> CGColor {
+    static func edgeColor(_ image: CGImage) -> CGColor {
         var pixel = [UInt8](repeating: 0, count: 4)
         let drawn = pixel.withUnsafeMutableBytes { raw -> Bool in
             guard let context = CGContext(data: raw.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,

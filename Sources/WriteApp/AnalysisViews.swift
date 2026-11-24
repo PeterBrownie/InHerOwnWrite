@@ -72,7 +72,7 @@ private struct JournalScopeRow: View {
             if !model.isRangeValid(journalID: journal.id) {
                 Label("Try a list like 1-40, 52", systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.highlight)
             }
         }
     }

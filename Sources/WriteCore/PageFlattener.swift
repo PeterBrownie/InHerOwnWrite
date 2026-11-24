@@ -34,9 +34,10 @@ public enum PageFlattener {
         var largest: Double { values.map(abs).max() ?? 0 }
     }
 
-    /// Crops a prepared photo and, if asked, flattens it. Returns a JPEG.
-    public static func process(_ jpeg: Data, crop: CGRect, flatten: Bool) throws -> Data {
-        let cropped = try PagePhoto.crop(jpeg, to: crop)
+    /// Turns a prepared photo clockwise by `rotation` degrees, crops it, and, if asked, flattens it. The crop
+    /// refers to the turned photo. Returns a JPEG.
+    public static func process(_ jpeg: Data, crop: CGRect, flatten: Bool, rotation: Double = 0) throws -> Data {
+        let cropped = try PagePhoto.crop(PagePhoto.rotated(jpeg, degrees: rotation), to: crop)
         guard flatten,
               let source = CGImageSourceCreateWithData(cropped as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil),

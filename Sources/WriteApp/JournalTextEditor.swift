@@ -8,7 +8,7 @@ import WriteCore
 struct JournalTextEditor: NSViewRepresentable {
     @Binding var text: String
     var isEditable = true
-    /// Marked words: orange where the model wasn't sure, underlined where it changed what Vision read.
+    /// Marked words: green where the model wasn't sure, underlined where it changed what Vision read.
     var notes: [(note: WordNote, range: NSRange)] = []
     /// Called with a replacement, or nil to keep the word as read.
     var onResolve: (WordNote, String?) -> Void = { _, _ in }
@@ -119,7 +119,7 @@ struct JournalTextEditor: NSViewRepresentable {
                     ], range: range)
                 }
                 if note.confidence < LocalReader.closeCall {
-                    storage.addAttribute(.backgroundColor, value: NSColor.systemOrange.withAlphaComponent(0.28), range: range)
+                    storage.addAttribute(.backgroundColor, value: NSColor(Theme.highlight).withAlphaComponent(0.28), range: range)
                     if !note.wasChanged {
                         storage.addAttribute(.toolTip, value: "Read on this Mac with \(percent)% confidence. Click for other readings.",
                                              range: range)
@@ -139,14 +139,15 @@ struct JournalTextEditor: NSViewRepresentable {
             let note = found.note
             let percent = Int((note.confidence * 100).rounded())
             let heading = note.wasChanged
-                ? "Vision read “\(note.read)”; changed to “\(note.text)” (\(percent)% sure)"
-                : "Read as “\(note.text)” (\(percent)% sure)"
+                ? "Corrected from “\(note.read)” (\(percent)% sure of “\(note.text)”)"
+                : "\(percent)% sure of “\(note.text)”"
             let title = NSMenuItem(title: heading, action: nil, keyEquivalent: "")
             title.isEnabled = false
             menu.addItem(title)
             menu.addItem(.separator())
             for option in note.options {
-                menu.addItem(ActionItem(title: "Replace with “\(option)”") { [weak self] in self?.onResolve(note, option) })
+                let title = option == note.read ? "Restore the original, “\(option)”" : "Replace with “\(option)”"
+                menu.addItem(ActionItem(title: title) { [weak self] in self?.onResolve(note, option) })
             }
             menu.addItem(ActionItem(title: "Keep “\(note.text)”") { [weak self] in self?.onResolve(note, nil) })
             menu.addItem(.separator())

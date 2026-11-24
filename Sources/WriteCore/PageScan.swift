@@ -314,6 +314,54 @@ struct PaperMap {
 }
 
 extension PagePhoto {
+    /// Turns a photo clockwise by `degrees`. Quarter turns are exact; other angles widen the canvas to keep
+    /// every corner, filling the new space with the photo's own edge color.
+    public static func rotated(_ image: CGImage, degrees: Double) -> CGImage? {
+        let turns = degrees / 90
+        let quarter = abs(turns - turns.rounded()) < 1e-9
+        let radians = -degrees * .pi / 180
+        let width = Double(image.width), height = Double(image.height)
+        let newWidth = Int((abs(width * cos(radians)) + abs(height * sin(radians))).rounded())
+        let newHeight = Int((abs(width * sin(radians)) + abs(height * cos(radians))).rounded())
+        guard newWidth > 0, newHeight > 0,
+              let context = CGContext(data: nil, width: newWidth, height: newHeight, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { return nil }
+        if !quarter {
+            context.setFillColor(Straightener.edgeColor(image))
+            context.fill(CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
+        }
+        context.interpolationQuality = .high
+        context.translateBy(x: Double(newWidth) / 2, y: Double(newHeight) / 2)
+        context.rotate(by: radians)
+        context.draw(image, in: CGRect(x: -width / 2, y: -height / 2, width: width, height: height))
+        return context.makeImage()
+    }
+
+    /// A prepared photo turned clockwise by `degrees`, as a JPEG.
+    public static func rotated(_ jpeg: Data, degrees: Double) throws -> Data {
+        guard abs(degrees.truncatingRemainder(dividingBy: 360)) > 0.01 else { return jpeg }
+        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let turned = rotated(image, degrees: degrees)
+        else { throw PagePhotoError.unreadable }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil)
+        else { throw PagePhotoError.unreadable }
+        CGImageDestinationAddImage(destination, turned, [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw PagePhotoError.unreadable }
+        return output as Data
+    }
+
+    /// A normalized crop carried through a quarter turn clockwise (`quarters` = 1) or counterclockwise (-1).
+    public static func rotatedCrop(_ crop: CGRect, quarters: Int) -> CGRect {
+        var rect = crop
+        for _ in 0..<((quarters % 4 + 4) % 4) {
+            rect = CGRect(x: 1 - rect.maxY, y: rect.minX, width: rect.height, height: rect.width)
+        }
+        return rect
+    }
+
     /// Cuts a prepared photo down to a normalized, top-left rectangle.
     public static func crop(_ jpeg: Data, to rect: CGRect) throws -> Data {
         let unit = CGRect(x: 0, y: 0, width: 1, height: 1)

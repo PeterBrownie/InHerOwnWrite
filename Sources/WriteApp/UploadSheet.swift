@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 import WriteCore
@@ -20,6 +21,12 @@ public struct UploadSheet: View {
     @ViewState private var showResult = false
     @ViewState private var result: NSImage?
     @ViewState private var isProcessing = false
+    /// Quarter turns clockwise, for photos taken sideways or upside down.
+    @ViewState private var quarterTurns = 0
+    /// A small extra turn, in degrees clockwise, to level a tilted page.
+    @ViewState private var straighten = 0.0
+    /// The photo as turned, shown in the crop editor so the crop lines up with what will be saved.
+    @ViewState private var turned: NSImage?
     @ViewState private var isScanning = false
     @ViewState private var isPreparing = false
     @ViewState private var isChoosingFile = false
@@ -30,7 +37,12 @@ public struct UploadSheet: View {
     @ViewState private var problem: String?
     @ViewState private var savedMessage: String?
 
-    public init() {}
+    /// A photo to start with, for screenshots and checks.
+    private let preloaded: Data?
+
+    public init(preloaded: Data? = nil) {
+        self.preloaded = preloaded
+    }
 
     private var number: Int? {
         Int(numberText).flatMap { (1...Vault.maximumPageNumber).contains($0) ? $0 : nil }
@@ -62,7 +74,10 @@ public struct UploadSheet: View {
         }
         .frame(width: 820, height: 600)
         .background(Theme.card)
-        .onAppear(perform: setDefaults)
+        .onAppear {
+            setDefaults()
+            if let preloaded, jpeg == nil { show(preloaded) }
+        }
         .task { await Task.detached(priority: .utility) { await PageScan.warmUp() }.value }
         .fileImporter(isPresented: $isChoosingFile, allowedContentTypes: [.image]) { result in
             if case .success(let url) = result { load(url) }
@@ -99,7 +114,7 @@ public struct UploadSheet: View {
                         }
                         .padding(10)
                     } else {
-                        CropEditor(image: preview, crop: $crop)
+                        CropEditor(image: turned ?? preview, crop: $crop)
                             .padding(10)
                     }
                 } else if isPreparing {
@@ -132,15 +147,41 @@ public struct UploadSheet: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
+                    Spacer()
+                    Button { turn(by: -1) } label: { Image(systemName: "rotate.left") }
+                        .help("Turn the photo a quarter turn to the left")
+                    Button { turn(by: 1) } label: { Image(systemName: "rotate.right") }
+                        .help("Turn the photo a quarter turn to the right")
+                    Text("Straighten").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: $straighten, in: -15...15, step: 0.5)
+                        .frame(width: 110)
+                        .help("Turn the photo a little to level a tilted page")
+                    Text(straighten == 0 ? "0°" : String(format: "%+.1f°", straighten))
+                        .font(.caption.monospacedDigit())
+                        .frame(width: 40, alignment: .leading)
+                        .onTapGesture(count: 2) { straighten = 0 }
+                        .help("Double-click to reset")
+                }
+                .controlSize(.small)
+                .onChange(of: showResult) { refreshResult() }
+                .onChange(of: flattenPages) { refreshResult() }
+                .onChange(of: crop) { if showResult { refreshResult() } }
+                .onChange(of: straighten) { refreshTurned() }
+                HStack(spacing: 10) {
                     Toggle("Flatten curved pages", isOn: $flattenPages)
                         .toggleStyle(.checkbox)
                         .help("Straightens lines of writing that bend toward the fold or slope across the photo")
                     Spacer()
+                    if let suggestion, crop != suggestion.crop {
+                        Button("Reset Crop") { crop = suggestion.crop }
+                    }
+                    if crop != PageScanResult.whole.crop {
+                        Button("Whole Photo") { crop = PageScanResult.whole.crop }
+                    }
+                    Button("Change…") { isChoosingFile = true }
                 }
-                .onChange(of: showResult) { refreshResult() }
-                .onChange(of: flattenPages) { refreshResult() }
-                .onChange(of: crop) { if showResult { refreshResult() } }
-                HStack(spacing: 10) {
+                .controlSize(.small)
+                HStack(spacing: 6) {
                     if showResult {
                         Text("This is what will be saved and read.")
                             .font(.caption)
@@ -154,13 +195,6 @@ public struct UploadSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if let suggestion, crop != suggestion.crop {
-                        Button("Reset Crop") { crop = suggestion.crop }.controlSize(.small)
-                    }
-                    if crop != PageScanResult.whole.crop {
-                        Button("Whole Photo") { crop = PageScanResult.whole.crop }.controlSize(.small)
-                    }
-                    Button("Change…") { isChoosingFile = true }.controlSize(.small)
                 }
             }
         }
@@ -235,7 +269,7 @@ public struct UploadSheet: View {
                 if isTaken {
                     Label("Already saved. Saving will ask before replacing it.", systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Theme.highlight)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -358,6 +392,9 @@ public struct UploadSheet: View {
         suggestion = nil
         result = nil
         showResult = false
+        quarterTurns = 0
+        straighten = 0
+        turned = nil
         crop = PageScanResult.whole.crop
         Task {
             do {
@@ -366,17 +403,7 @@ public struct UploadSheet: View {
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                     return try PagePhoto.prepare(try Data(contentsOf: url))
                 }.value
-                jpeg = prepared
-                preview = NSImage(data: prepared)
-                isPreparing = false
-                isScanning = true
-                let found = await PageScan.analyze(jpeg: prepared)
-                // Another photo may have been chosen meanwhile.
-                guard jpeg == prepared else { return }
-                suggestion = found
-                crop = found.crop
-                isScanning = false
-                if !numberWasTyped { suggestNumber() }
+                show(prepared)
             } catch {
                 problem = error.localizedDescription
                 isPreparing = false
@@ -385,19 +412,85 @@ public struct UploadSheet: View {
         }
     }
 
+    /// Shows a prepared photo and looks for the page in it.
+    private func show(_ prepared: Data) {
+        jpeg = prepared
+        preview = NSImage(data: prepared)
+        isPreparing = false
+        isScanning = true
+        Task {
+            let found = await PageScan.analyze(jpeg: prepared)
+            // Another photo may have been chosen meanwhile.
+            guard jpeg == prepared else { return }
+            suggestion = found
+            crop = found.crop
+            isScanning = false
+            if !numberWasTyped { suggestNumber() }
+        }
+    }
+
+    private var rotation: Double { Double(quarterTurns) * 90 + straighten }
+
     /// Crops and flattens off the main thread for the Result view.
     private func refreshResult() {
         guard showResult, let jpeg else { return }
         isProcessing = true
-        let crop = crop, flatten = flattenPages
+        let crop = crop, flatten = flattenPages, rotation = rotation
         Task {
             let processed = await Task.detached(priority: .userInitiated) {
-                try? PageFlattener.process(jpeg, crop: crop, flatten: flatten)
+                try? PageFlattener.process(jpeg, crop: crop, flatten: flatten, rotation: rotation)
             }.value
             // Only the newest request counts.
-            guard self.jpeg == jpeg, self.crop == crop, self.flattenPages == flatten else { return }
+            guard self.jpeg == jpeg, self.crop == crop, self.flattenPages == flatten, self.rotation == rotation else { return }
             result = processed.flatMap(NSImage.init(data:))
             isProcessing = false
+        }
+    }
+
+    /// Redraws the turned photo for the crop editor.
+    private func refreshTurned() {
+        guard let jpeg else { return }
+        let rotation = rotation
+        if rotation == 0 {
+            turned = nil
+            refreshResult()
+            return
+        }
+        Task {
+            let image = await Task.detached(priority: .userInitiated) { () -> NSImage? in
+                guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+                      let photo = CGImageSourceCreateImageAtIndex(source, 0, nil),
+                      let turned = PagePhoto.rotated(photo, degrees: rotation)
+                else { return nil }
+                return NSImage(cgImage: turned, size: NSSize(width: turned.width, height: turned.height))
+            }.value
+            guard self.jpeg == jpeg, self.rotation == rotation else { return }
+            turned = image
+            refreshResult()
+        }
+    }
+
+    /// A quarter turn carries the crop around with the photo, then looks for the page again, since a
+    /// sideways photo hides it from the first look.
+    private func turn(by quarters: Int) {
+        guard let jpeg else { return }
+        quarterTurns = (quarterTurns + quarters + 4) % 4
+        crop = PagePhoto.rotatedCrop(crop, quarters: quarters)
+        refreshTurned()
+        let rotation = rotation
+        isScanning = true
+        Task {
+            let found = await Task.detached(priority: .userInitiated) { () -> PageScanResult? in
+                guard let turnedJPEG = try? PagePhoto.rotated(jpeg, degrees: rotation) else { return nil }
+                return await PageScan.analyze(jpeg: turnedJPEG)
+            }.value
+            guard self.jpeg == jpeg, self.rotation == rotation else { return }
+            isScanning = false
+            if let found {
+                suggestion = found
+                crop = found.crop
+                if !numberWasTyped { suggestNumber() }
+            }
         }
     }
 
@@ -405,7 +498,7 @@ public struct UploadSheet: View {
         guard let journalID, let number, let jpeg else { return }
         let page: Data
         do {
-            page = try PageFlattener.process(jpeg, crop: crop, flatten: flattenPages)
+            page = try PageFlattener.process(jpeg, crop: crop, flatten: flattenPages, rotation: rotation)
         } catch {
             problem = error.localizedDescription
             return
@@ -427,6 +520,9 @@ public struct UploadSheet: View {
         suggestion = nil
         result = nil
         showResult = false
+        quarterTurns = 0
+        straighten = 0
+        turned = nil
         crop = PageScanResult.whole.crop
         numberWasTyped = false
         numberText = String(min(number + 1, Vault.maximumPageNumber))

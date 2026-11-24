@@ -23,6 +23,18 @@ public final class LocalReadSession: ObservableObject {
         public var changed: Bool
         /// Fixed by hand while the reading ran.
         public var edited = false
+        /// What Vision first read.
+        public var read = ""
+        /// Every spelling the model weighed for this word, with its best share.
+        public var weighed: [String: Double] = [:]
+
+        /// Other spellings worth offering, most likely first.
+        public var otherReadings: [String] {
+            weighed.filter { $0.key != text && $0.key != read && !$0.key.isEmpty && $0.value >= 0.05 }
+                .sorted { $0.value > $1.value }
+                .prefix(4)
+                .map(\.key)
+        }
     }
 
     public struct Summary: Identifiable, Equatable {
@@ -122,7 +134,8 @@ public final class LocalReadSession: ObservableObject {
             photo = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
             lineBoxes = layout.lines.map(\.box)
             lines = layout.lines.map { line in
-                line.words.map { WordState(text: $0.text, letters: $0.letters, box: $0.box, confidence: nil, changed: false) }
+                line.words.map { WordState(text: $0.text, letters: $0.letters, box: $0.box, confidence: nil, changed: false,
+                                           read: $0.text) }
             }
             phase = .reading
 
@@ -150,6 +163,12 @@ public final class LocalReadSession: ObservableObject {
             guard let question, question.id == id else { return }
             self.shares = shares
             self.choice = choice
+            if lines.indices.contains(question.line), lines[question.line].indices.contains(question.word) {
+                for (candidate, share) in zip(question.candidates, shares) where !candidate.isEmpty {
+                    lines[question.line][question.word].weighed[candidate] =
+                        max(lines[question.line][question.word].weighed[candidate] ?? 0, share)
+                }
+            }
             let word = lines[safe: question.line]?[safe: question.word]?.text ?? ""
             let title: String
             if let letter = question.letter {

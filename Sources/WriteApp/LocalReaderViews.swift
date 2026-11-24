@@ -70,7 +70,7 @@ struct ModelStatus: View {
         VStack(alignment: .leading, spacing: 8) {
             if !model.hasLocalRuntime {
                 Label("llama.cpp isn't installed. In Terminal, run: brew install llama.cpp", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.highlight)
                     .textSelection(.enabled)
             }
             if let progress = model.modelDownloadProgress {
@@ -185,7 +185,7 @@ public struct LocalSessionView: View {
         case .reading: Label("Reading", systemImage: "eye").foregroundStyle(Theme.accent)
         case .done: Label("Saved to the page", systemImage: "checkmark.circle").foregroundStyle(.green)
         case .stopped: Label("Stopped", systemImage: "stop.circle").foregroundStyle(.secondary)
-        case .failed(let message): Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).lineLimit(2)
+        case .failed(let message): Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.highlight).lineLimit(2)
         }
     }
 
@@ -387,7 +387,7 @@ struct TranscriptCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 12) {
                 legend(color: Theme.accent, "changed by the model")
-                legend(color: .orange, "close call")
+                legend(color: Theme.highlight, "close call")
                 legend(color: .blue, "fixed by you")
                 Spacer()
                 Text("Click a word to fix it.")
@@ -427,7 +427,7 @@ struct TranscriptWord: View {
             .foregroundStyle(color)
             .underline(word.edited || word.changed || isCloseCall,
                        pattern: isCloseCall && !word.changed && !word.edited ? .dot : .solid,
-                       color: word.edited ? .blue : (word.changed ? Theme.accent : .orange))
+                       color: word.edited ? .blue : (word.changed ? Theme.accent : Theme.highlight))
             .padding(.horizontal, 1)
             .background(isCurrent ? Theme.accent.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 3))
             .contentShape(Rectangle())
@@ -438,15 +438,38 @@ struct TranscriptWord: View {
             }
             .help(isDecided ? "Click to fix this word" : "Not decided yet")
             .popover(isPresented: $isEditing, arrowEdge: .bottom) {
-                HStack {
-                    TextField("Word", text: $draft)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
-                        .onSubmit(save)
-                    Button("Fix", action: save)
-                        .keyboardShortcut(.defaultAction)
+                VStack(alignment: .leading, spacing: 8) {
+                    if word.changed && word.read != word.text {
+                        HStack(spacing: 6) {
+                            Text("Corrected from “\(word.read)”").font(.callout)
+                            Spacer()
+                            Button("Use “\(word.read)”") { save(word.read) }.controlSize(.small)
+                        }
+                    }
+                    if let confidence = word.confidence {
+                        Text("The model was \(Int((confidence * 100).rounded()))% sure of “\(word.text)”.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !word.otherReadings.isEmpty {
+                        Text("Other readings").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        WordFlow(spacing: 6) {
+                            ForEach(word.otherReadings, id: \.self) { option in
+                                Button(option) { save(option) }.controlSize(.small)
+                            }
+                        }
+                    }
+                    HStack {
+                        TextField("Word", text: $draft)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                            .onSubmit { save(draft) }
+                        Button("Fix") { save(draft) }
+                            .keyboardShortcut(.defaultAction)
+                    }
                 }
-                .padding(10)
+                .padding(12)
+                .frame(width: 300, alignment: .leading)
             }
     }
 
@@ -456,8 +479,8 @@ struct TranscriptWord: View {
         return isDecided || isCurrent ? .primary : .secondary.opacity(0.45)
     }
 
-    private func save() {
-        session.edit(line: line, word: index, to: draft)
+    private func save(_ text: String) {
+        session.edit(line: line, word: index, to: text)
         isEditing = false
     }
 }
@@ -518,7 +541,7 @@ struct RecentDecisions: View {
                         .foregroundStyle(item.changed ? Theme.accent : .primary)
                     Text(item.share.formatted(.percent.precision(.fractionLength(0))))
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(item.share < LocalReader.closeCall ? .orange : .secondary)
+                        .foregroundStyle(item.share < LocalReader.closeCall ? Theme.highlight : .secondary)
                         .frame(width: 36, alignment: .trailing)
                 }
             }
@@ -589,7 +612,7 @@ struct PageOverlay: View {
                         }
                     }
                 } else if let confidence = word.confidence {
-                    let color: Color = word.changed ? accent : (confidence < LocalReader.closeCall ? .orange : .green)
+                    let color: Color = word.changed ? accent : (confidence < LocalReader.closeCall ? Theme.highlight : .secondary)
                     var underline = Path()
                     underline.move(to: CGPoint(x: box.minX, y: box.maxY + 1.5))
                     underline.addLine(to: CGPoint(x: box.maxX, y: box.maxY + 1.5))

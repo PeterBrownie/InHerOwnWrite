@@ -30,7 +30,9 @@ enum Theme {
     static let card = dynamic(light: (0.996, 0.988, 0.969), dark: (0.161, 0.149, 0.137))
     static let line = dynamic(light: (0.867, 0.835, 0.776), dark: (0.267, 0.247, 0.224))
     static let accent = dynamic(light: (0.561, 0.208, 0.180), dark: (0.871, 0.490, 0.439))
-    static let notice = dynamic(light: (0.984, 0.925, 0.847), dark: (0.290, 0.204, 0.114))
+    static let notice = dynamic(light: (0.898, 0.953, 0.906), dark: (0.110, 0.200, 0.141))
+    /// Warnings and words a reading wasn't sure of.
+    static let highlight = dynamic(light: (0.180, 0.545, 0.341), dark: (0.400, 0.780, 0.525))
     /// Chart marks, validated for contrast and lightness against both card surfaces.
     static let chart = dynamic(light: (0.561, 0.208, 0.180), dark: (0.769, 0.408, 0.361))
 
