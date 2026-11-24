@@ -60,7 +60,49 @@ public enum LocalReadEvent: Sendable {
     case answered(question: Int, choice: Int, shares: [Double])
     case lettersMoved(line: Int, word: Int, text: String, letters: [CGRect])
     case wordFinished(line: Int, word: Int, text: String, confidence: Double)
+    /// Lines read earlier, picked up from a reading that was stopped partway.
+    case resumed(LocalReadProgress)
+    /// A line is done; `progress` holds every line done so far, to save with the page.
+    case lineFinished(line: Int, progress: LocalReadProgress)
     case finished(String)
+}
+
+/// A local reading saved partway, line by line, so a reading stopped by quitting, sleep, or the idle lock
+/// picks up where it left off. Saved with the page, encrypted.
+public struct LocalReadProgress: Codable, Sendable, Equatable {
+    public struct Word: Codable, Sendable, Equatable {
+        public var text: String
+        public var confidence: Double
+        /// Whether the model changed what Vision read.
+        public var changed: Bool
+
+        public init(text: String, confidence: Double, changed: Bool) {
+            self.text = text
+            self.confidence = confidence
+            self.changed = changed
+        }
+    }
+
+    /// The layout it was read with. The same photo gives the same layout; if it no longer matches, for
+    /// example because the photo was replaced, the reading starts over.
+    public var layoutKey: String
+    /// The decided words of each finished line, from the top.
+    public var lines: [[Word]]
+    /// Notes on words in the finished lines.
+    public var notes: [WordNote]
+    /// How well the best spelling matched, for each question so far.
+    public var bestMatches: [Double]
+    /// Words fixed by hand in the reading window, by line and word position. An empty fix removes the word.
+    public var edits: [Int: [Int: String]]
+
+    public init(layoutKey: String, lines: [[Word]] = [], notes: [WordNote] = [], bestMatches: [Double] = [],
+                edits: [Int: [Int: String]] = [:]) {
+        self.layoutKey = layoutKey
+        self.lines = lines
+        self.notes = notes
+        self.bestMatches = bestMatches
+        self.edits = edits
+    }
 }
 
 /// A finished local reading: the text, and notes on the words worth a second look.
@@ -73,17 +115,27 @@ public struct LocalReadResult: Sendable, Equatable {
         self.notes = notes
     }
 
-    /// The reading with words fixed by hand while it ran, keyed by line and then word position. Notes on
-    /// those words are dropped, since she has settled them.
+    /// The reading with words fixed by hand while it ran, keyed by line and then word position. An empty fix
+    /// removes a word that isn't on the page. Notes on fixed words are dropped, since she has settled them,
+    /// and notes on later words in a line with a removed word move back to stay on their word.
     public func applying(_ edits: [Int: [Int: String]]) -> LocalReadResult {
         guard !edits.isEmpty else { return self }
         var lines = EntryBuilder.lines(of: text).map { $0.components(separatedBy: " ") }
+        var removed: [Int: [Int]] = [:]
         for (line, words) in edits where lines.indices.contains(line) {
             for (word, replacement) in words where lines[line].indices.contains(word) {
                 lines[line][word] = replacement
+                if replacement.isEmpty { removed[line, default: []].append(word) }
             }
         }
-        let kept = notes.filter { edits[$0.line]?[$0.word] == nil }
+        for (line, words) in removed {
+            lines[line] = lines[line].enumerated().filter { !words.contains($0.offset) }.map(\.element)
+        }
+        let kept = notes.filter { edits[$0.line]?[$0.word] == nil }.map { note -> WordNote in
+            var note = note
+            note.word -= removed[note.line]?.filter { $0 < note.word }.count ?? 0
+            return note
+        }
         return LocalReadResult(text: lines.map { $0.joined(separator: " ") }.joined(separator: "\n"), notes: kept)
     }
 }
@@ -113,7 +165,10 @@ public struct LocalReader: Sendable {
         self.suggest = suggest
     }
 
-    public func read(jpeg: Data, report: @escaping @Sendable (LocalReadEvent) async -> Void) async throws -> LocalReadResult {
+    /// Reads the page. With `resume` from a reading stopped partway on the same layout, its finished lines
+    /// are kept and reading continues after them.
+    public func read(jpeg: Data, resume: LocalReadProgress? = nil,
+                     report: @escaping @Sendable (LocalReadEvent) async -> Void) async throws -> LocalReadResult {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               let photo = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { throw PagePhotoError.unreadable }
@@ -122,26 +177,36 @@ public struct LocalReader: Sendable {
         let ink = InkMap(image: page)
         await report(.started(layout, image: page))
 
+        var progress = LocalReadProgress(layoutKey: layout.key)
+        if let resume, resume.layoutKey == layout.key, resume.lines.count <= layout.lines.count,
+           zip(resume.lines, layout.lines).allSatisfy({ $0.count == $1.words.count }) {
+            progress = resume
+            await report(.resumed(resume))
+        }
+
         var questionID = 0
-        var lines: [String] = []
+        var lines: [String] = progress.lines.map { $0.map(\.text).joined(separator: " ") }
         // How well the best spelling of each word matched, so "Something else" can be judged against what
         // a good match looks like on this page.
-        var bestMatches: [Double] = []
-        var notes: [WordNote] = []
-        for (lineIndex, line) in layout.lines.enumerated() {
+        var bestMatches: [Double] = progress.bestMatches
+        var notes: [WordNote] = progress.notes
+        for (lineIndex, line) in layout.lines.enumerated() where lineIndex >= progress.lines.count {
             var words: [String] = []
+            var decided: [LocalReadProgress.Word] = []
             for (wordIndex, word) in line.words.enumerated() {
                 try Task.checkCancellation()
                 let crop = WordCrop.make(page: page, box: word.box)
                 await report(.wordStarted(line: lineIndex, word: wordIndex, crop: crop?.preview))
                 guard let crop else {
                     words.append(word.text)
+                    decided.append(.init(text: word.text, confidence: 0, changed: false))
                     await report(.wordFinished(line: lineIndex, word: wordIndex, text: word.text, confidence: 0))
                     continue
                 }
                 let parts = WordParts(word.text)
                 guard !parts.core.isEmpty else {
                     words.append(word.text)
+                    decided.append(.init(text: word.text, confidence: 1, changed: false))
                     await report(.wordFinished(line: lineIndex, word: wordIndex, text: word.text, confidence: 1))
                     continue
                 }
@@ -295,12 +360,18 @@ public struct LocalReader: Sendable {
                         .prefix(4)
                         .map { parts.joined(core: $0.key) }
                     notes.append(WordNote(line: lineIndex, word: wordIndex, text: text, read: word.text,
-                                          options: Array(options), confidence: confidence))
+                                          options: Array(options), confidence: confidence,
+                                          outline: layout.photoOutline(of: word.box)))
                 }
                 words.append(text)
+                decided.append(.init(text: text, confidence: confidence, changed: core != parts.core))
                 await report(.wordFinished(line: lineIndex, word: wordIndex, text: text, confidence: confidence))
             }
             lines.append(words.joined(separator: " "))
+            progress.lines.append(decided)
+            progress.notes = notes
+            progress.bestMatches = bestMatches
+            await report(.lineFinished(line: lineIndex, progress: progress))
         }
         let text = lines.joined(separator: "\n")
         await report(.finished(text))

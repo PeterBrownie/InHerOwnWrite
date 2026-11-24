@@ -309,6 +309,7 @@ public final class Vault: @unchecked Sendable {
             let pageIDs = try pages().filter { $0.journalID == id }.map(\.id)
             try database.transaction {
                 for pageID in pageIDs {
+                    try database.run("DELETE FROM progress WHERE id = ?", [.text(Self.key(pageID))])
                     try database.run("DELETE FROM pages WHERE id = ?", [.text(Self.key(pageID))])
                 }
                 try database.run("DELETE FROM journals WHERE id = ?", [.text(Self.key(id))])
@@ -361,7 +362,10 @@ public final class Vault: @unchecked Sendable {
             try database.transaction {
                 let taken = try !database.query("SELECT 1 FROM pages WHERE slot = ?", [.blob(slot)]) { _ in true }.isEmpty
                 if taken && !replacing { throw VaultError.duplicatePage }
-                if taken { try database.run("DELETE FROM pages WHERE slot = ?", [.blob(slot)]) }
+                if taken {
+                    try database.run("DELETE FROM progress WHERE id IN (SELECT id FROM pages WHERE slot = ?)", [.blob(slot)])
+                    try database.run("DELETE FROM pages WHERE slot = ?", [.blob(slot)])
+                }
                 try database.run(
                     "INSERT INTO pages (id, slot, record, body, image) VALUES (?, ?, ?, ?, ?)",
                     [.text(id), .blob(slot), .blob(record), .blob(body), .blob(image)]
@@ -428,8 +432,49 @@ public final class Vault: @unchecked Sendable {
             page.updatedAt = Date()
             let id = Self.key(pageID)
             let body = try Crypto.seal(Data(transcription.text.utf8), key: keys.records, context: "page/\(id)/body")
-            try database.run("UPDATE pages SET record = ?, body = ? WHERE id = ?",
-                             [.blob(try sealRecord(page)), .blob(body), .text(id)])
+            try database.transaction {
+                try database.run("UPDATE pages SET record = ?, body = ? WHERE id = ?",
+                                 [.blob(try sealRecord(page)), .blob(body), .text(id)])
+                // A finished reading replaces any reading saved partway.
+                try database.run("DELETE FROM progress WHERE id = ?", [.text(id)])
+            }
+        }
+    }
+
+    /// Saves a reading on this Mac partway, so it can pick up where it stopped.
+    public func saveProgress(pageID: UUID, progress: LocalReadProgress) throws {
+        try locked {
+            let keys = try requireKeys()
+            let id = Self.key(pageID)
+            _ = try page(id: pageID)
+            let sealed = try Crypto.seal(try JSONEncoder().encode(progress), key: keys.records, context: "page/\(id)/progress")
+            try database.run("INSERT OR REPLACE INTO progress (id, record) VALUES (?, ?)", [.text(id), .blob(sealed)])
+        }
+    }
+
+    /// A reading on this Mac saved partway, if there is one.
+    public func progress(pageID: UUID) throws -> LocalReadProgress? {
+        try locked {
+            let keys = try requireKeys()
+            let id = Self.key(pageID)
+            guard let sealed = try database.query("SELECT record FROM progress WHERE id = ?", [.text(id)], map: { $0.blob(0) }).first
+            else { return nil }
+            return try decode(LocalReadProgress.self, sealed, key: keys.records, context: "page/\(id)/progress")
+        }
+    }
+
+    public func clearProgress(pageID: UUID) throws {
+        try locked {
+            _ = try requireKeys()
+            try database.run("DELETE FROM progress WHERE id = ?", [.text(Self.key(pageID))])
+        }
+    }
+
+    /// Pages with a reading on this Mac saved partway.
+    public func pagesWithProgress() throws -> Set<UUID> {
+        try locked {
+            _ = try requireKeys()
+            return Set(try database.query("SELECT id FROM progress") { UUID(uuidString: $0.string(0)) }.compactMap { $0 })
         }
     }
 
@@ -474,6 +519,7 @@ public final class Vault: @unchecked Sendable {
     public func deletePage(id: UUID) throws {
         try locked {
             _ = try requireKeys()
+            try database.run("DELETE FROM progress WHERE id = ?", [.text(Self.key(id))])
             try database.run("DELETE FROM pages WHERE id = ?", [.text(Self.key(id))])
             guard database.changes > 0 else { throw VaultError.notFound }
         }

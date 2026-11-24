@@ -390,7 +390,7 @@ struct TranscriptCard: View {
                 legend(color: Theme.highlight, "close call")
                 legend(color: .blue, "fixed by you")
                 Spacer()
-                Text("Click a word to fix it.")
+                Text("Click a word to see or fix it.")
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -421,23 +421,47 @@ struct TranscriptWord: View {
     private var isDecided: Bool { word.confidence != nil }
     private var isCloseCall: Bool { (word.confidence ?? 1) < LocalReader.closeCall }
 
+    private var isSelected: Bool { session.selected == .init(line: line, word: index) }
+
     var body: some View {
         Text(word.text)
             .font(.system(size: 15, design: .serif))
             .foregroundStyle(color)
-            .underline(word.edited || word.changed || isCloseCall,
+            .strikethrough(word.removed, color: .secondary)
+            .underline(!word.removed && (word.edited || word.changed || isCloseCall),
                        pattern: isCloseCall && !word.changed && !word.edited ? .dot : .solid,
                        color: word.edited ? .blue : (word.changed ? Theme.accent : Theme.highlight))
             .padding(.horizontal, 1)
-            .background(isCurrent ? Theme.accent.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 3))
+            .background(isCurrent ? Theme.accent.opacity(0.18) : (isSelected ? Color.blue.opacity(0.14) : Color.clear),
+                        in: RoundedRectangle(cornerRadius: 3))
             .contentShape(Rectangle())
             .onTapGesture {
+                session.selected = .init(line: line, word: index)
                 guard isDecided else { return }
-                draft = word.text
+                draft = word.removed ? "" : word.text
                 isEditing = true
             }
-            .help(isDecided ? "Click to fix this word" : "Not decided yet")
+            .help(word.removed ? "Removed: not on the page. Click to restore it."
+                  : isDecided ? "Click to see this word on the page and fix it" : "Not decided yet")
             .popover(isPresented: $isEditing, arrowEdge: .bottom) {
+                if word.removed {
+                    HStack(spacing: 8) {
+                        Text("“\(word.text)” will be left out when the page is saved.").font(.callout)
+                        Button("Restore") {
+                            session.restore(line: line, word: index)
+                            isEditing = false
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    }
+                    .padding(12)
+                    .frame(width: 300, alignment: .leading)
+                } else {
+                    editor
+                }
+            }
+    }
+
+    private var editor: some View {
                 VStack(alignment: .leading, spacing: 8) {
                     if word.changed && word.read != word.text {
                         HStack(spacing: 6) {
@@ -464,16 +488,19 @@ struct TranscriptWord: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 180)
                             .onSubmit { save(draft) }
-                        Button("Fix") { save(draft) }
+                        Button(isEmptyDraft ? "Remove" : "Fix") { save(draft) }
                             .keyboardShortcut(.defaultAction)
+                            .help(isEmptyDraft ? "Leave this word out: it isn't on the page" : "Use this spelling")
                     }
                 }
                 .padding(12)
                 .frame(width: 300, alignment: .leading)
-            }
     }
 
+    private var isEmptyDraft: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
     private var color: Color {
+        if word.removed { return .secondary }
         if word.edited { return .blue }
         if word.changed { return Theme.accent }
         return isDecided || isCurrent ? .primary : .secondary.opacity(0.45)
@@ -554,7 +581,23 @@ struct RecentDecisions: View {
 
 /// The page photo with lines, words, and letters drawn over it.
 struct PageOverlay: View {
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var session: LocalReadSession
+    @ViewState private var tint: CGImage?
+
+    /// Ink to color as words are decided: words the model changed, and words it wasn't sure of.
+    private var tintRegions: [InkTint.Region] {
+        guard model.showConfidence else { return [] }
+        return session.lines.flatMap { line in
+            line.compactMap { word -> InkTint.Region? in
+                guard let confidence = word.confidence, !word.removed, !word.edited,
+                      word.changed || confidence < LocalReader.closeCall
+                else { return nil }
+                let color = word.changed ? InkTint.changed : InkTint.closeCall
+                return InkTint.Region(box: word.box, red: color.red, green: color.green, blue: color.blue)
+            }
+        }
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -564,6 +607,13 @@ struct PageOverlay: View {
                     Image(nsImage: photo)
                         .resizable()
                         .frame(width: frame.width, height: frame.height)
+                    if let tint {
+                        Image(decorative: tint, scale: 1)
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: frame.width, height: frame.height)
+                            .allowsHitTesting(false)
+                    }
                     Canvas { context, size in draw(in: &context, size: size) }
                         .frame(width: frame.width, height: frame.height)
                         .allowsHitTesting(false)
@@ -575,6 +625,19 @@ struct PageOverlay: View {
             }
         }
         .background(Theme.paper)
+        .task(id: tintRegions) {
+            let regions = tintRegions
+            guard !regions.isEmpty, let page = session.pageImage else {
+                tint = nil
+                return
+            }
+            // A word is decided about every half second; a short pause keeps this to one redraw at a time.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            let made = await Task.detached(priority: .utility) { InkTint.overlay(for: page, regions: regions) }.value
+            guard !Task.isCancelled else { return }
+            tint = made
+        }
     }
 
     private func fit(_ image: CGSize, in area: CGSize) -> CGSize {
@@ -611,6 +674,11 @@ struct PageOverlay: View {
                             context.fill(Path(letterBox), with: .color(accent.opacity(0.28)))
                         }
                     }
+                } else if word.removed {
+                    var strike = Path()
+                    strike.move(to: CGPoint(x: box.minX, y: box.midY))
+                    strike.addLine(to: CGPoint(x: box.maxX, y: box.midY))
+                    context.stroke(strike, with: .color(.gray.opacity(0.8)), lineWidth: 2)
                 } else if let confidence = word.confidence {
                     let color: Color = word.changed ? accent : (confidence < LocalReader.closeCall ? Theme.highlight : .secondary)
                     var underline = Path()
@@ -622,6 +690,12 @@ struct PageOverlay: View {
                                    lineWidth: 0.75)
                 }
             }
+        }
+        // The word clicked in the text so far.
+        if let selected = session.selected, let word = session.lines[safe: selected.line]?[safe: selected.word] {
+            let outline = Path(roundedRect: rect(word.box).insetBy(dx: -4, dy: -4), cornerRadius: 4)
+            context.stroke(outline, with: .color(.white.opacity(0.9)), lineWidth: 4)
+            context.stroke(outline, with: .color(.blue), lineWidth: 2)
         }
     }
 }

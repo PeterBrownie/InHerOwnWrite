@@ -23,6 +23,8 @@ public final class LocalReadSession: ObservableObject {
         public var changed: Bool
         /// Fixed by hand while the reading ran.
         public var edited = false
+        /// Taken out by hand: not on the page. Shown struck through until the page is saved.
+        public var removed = false
         /// What Vision first read.
         public var read = ""
         /// Every spelling the model weighed for this word, with its best share.
@@ -50,6 +52,8 @@ public final class LocalReadSession: ObservableObject {
     public let pageNumber: Int
     public let journalName: String
     @Published public private(set) var photo: NSImage?
+    /// The page as read, straightened, which the word boxes refer to.
+    public private(set) var pageImage: CGImage?
     public let settings: LocalReadSettings
 
     @Published public private(set) var phase: Phase = .loadingModel
@@ -69,8 +73,27 @@ public final class LocalReadSession: ObservableObject {
     @Published public private(set) var modelMilliseconds = 0.0
     @Published public private(set) var startedAt: Date?
     @Published public private(set) var finishedAt: Date?
-    /// Words fixed by hand while reading, by line and word position, applied when the page is saved.
+    /// Words fixed by hand while reading, by line and word position, applied when the page is saved. An empty
+    /// fix removes the word.
     @Published public private(set) var edits: [Int: [Int: String]] = [:]
+    /// The word clicked in the text so far, outlined on the page.
+    @Published public var selected: WordPosition?
+    /// Lines picked up from a reading stopped partway.
+    @Published public private(set) var resumedLines = 0
+    /// Everything finished so far, with her fixes, for saving with the page.
+    public private(set) var progress: LocalReadProgress?
+    /// Called whenever there is new progress to save.
+    public var onProgress: ((LocalReadProgress) -> Void)?
+
+    public struct WordPosition: Equatable {
+        public var line: Int
+        public var word: Int
+
+        public init(line: Int, word: Int) {
+            self.line = line
+            self.word = word
+        }
+    }
 
     public init(pageID: UUID, pageNumber: Int, journalName: String, photo: NSImage?, settings: LocalReadSettings) {
         self.pageID = pageID
@@ -100,22 +123,59 @@ public final class LocalReadSession: ObservableObject {
         }
     }
 
-    /// The text as decided so far, with words not reached yet left out.
+    /// The text as decided so far, with words not reached yet, and words removed, left out.
     public var transcript: String {
-        lines.map { line in line.filter { $0.confidence != nil }.map(\.text).joined(separator: " ") }
+        lines.map { line in line.filter { $0.confidence != nil && !$0.removed }.map(\.text).joined(separator: " ") }
             .joined(separator: "\n")
     }
 
-    /// Fixes a word that has already been decided. It's saved with the page when the reading finishes.
+    /// Fixes a word that has already been decided, or removes it when `text` is empty. It's saved with the
+    /// page when the reading finishes.
     public func edit(line: Int, word: Int, to text: String) {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\n", with: " ")
-        guard !cleaned.isEmpty, lines.indices.contains(line), lines[line].indices.contains(word),
-              lines[line][word].confidence != nil
+        guard lines.indices.contains(line), lines[line].indices.contains(word), lines[line][word].confidence != nil
         else { return }
-        lines[line][word].text = cleaned
-        lines[line][word].edited = true
+        if cleaned.isEmpty {
+            lines[line][word].removed = true
+        } else {
+            lines[line][word].text = cleaned
+            lines[line][word].edited = true
+            lines[line][word].removed = false
+        }
         edits[line, default: [:]][word] = cleaned
+        saveProgress()
+    }
+
+    /// Puts back a word removed by hand, as it was before.
+    public func restore(line: Int, word: Int) {
+        guard lines.indices.contains(line), lines[line].indices.contains(word), lines[line][word].removed else { return }
+        lines[line][word].removed = false
+        if lines[line][word].edited {
+            edits[line, default: [:]][word] = lines[line][word].text
+        } else {
+            edits[line]?[word] = nil
+            if edits[line]?.isEmpty == true { edits[line] = nil }
+        }
+        saveProgress()
+    }
+
+    private func saveProgress() {
+        guard var progress else { return }
+        progress.edits = edits
+        self.progress = progress
+        onProgress?(progress)
+    }
+
+    /// Applies a fix saved earlier to a word as it's decided.
+    private func applySavedEdit(line: Int, word: Int) {
+        guard let saved = edits[line]?[word] else { return }
+        if saved.isEmpty {
+            lines[line][word].removed = true
+        } else {
+            lines[line][word].text = saved
+            lines[line][word].edited = true
+        }
     }
 
     public func setPhase(_ phase: Phase) {
@@ -132,12 +192,42 @@ public final class LocalReadSession: ObservableObject {
         switch event {
         case .started(let layout, let image):
             photo = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+            pageImage = image
             lineBoxes = layout.lines.map(\.box)
             lines = layout.lines.map { line in
                 line.words.map { WordState(text: $0.text, letters: $0.letters, box: $0.box, confidence: nil, changed: false,
                                            read: $0.text) }
             }
+            progress = LocalReadProgress(layoutKey: layout.key)
             phase = .reading
+
+        case .resumed(let saved):
+            progress = saved
+            edits = saved.edits
+            resumedLines = saved.lines.count
+            for (lineIndex, words) in saved.lines.enumerated() where lines.indices.contains(lineIndex) {
+                for (wordIndex, word) in words.enumerated() where lines[lineIndex].indices.contains(wordIndex) {
+                    lines[lineIndex][wordIndex].text = word.text
+                    lines[lineIndex][wordIndex].confidence = word.confidence
+                    lines[lineIndex][wordIndex].changed = word.changed
+                    if word.changed {
+                        lines[lineIndex][wordIndex].letters = LetterSplitter.evenly(text: word.text, box: lines[lineIndex][wordIndex].box)
+                    }
+                    applySavedEdit(line: lineIndex, word: wordIndex)
+                    wordsDone += 1
+                }
+            }
+            for note in saved.notes where lines.indices.contains(note.line) && lines[note.line].indices.contains(note.word) {
+                for option in note.options {
+                    lines[note.line][note.word].weighed[option] = 0.1
+                }
+            }
+
+        case .lineFinished(_, let finished):
+            var finished = finished
+            finished.edits = edits
+            progress = finished
+            onProgress?(finished)
 
         case .wordStarted(let line, let word, let crop):
             current = (line, word)
@@ -196,6 +286,7 @@ public final class LocalReadSession: ObservableObject {
             }
             lines[line][word].text = text
             lines[line][word].confidence = confidence
+            applySavedEdit(line: line, word: word)
             wordsDone += 1
 
         case .finished:
@@ -226,9 +317,19 @@ extension AppModel {
 
     public var localQueueCount: Int { localQueue.count }
 
-    /// Reads a page with the decision model on this Mac. The photo never leaves it.
-    public func readOnThisMac(_ id: UUID) {
+    /// Whether a page has a reading on this Mac saved partway, to pick up where it stopped.
+    public func hasLocalProgress(_ id: UUID) -> Bool {
+        pagesWithProgress.contains(id)
+    }
+
+    /// Reads a page with the decision model on this Mac. The photo never leaves it. A reading stopped partway
+    /// picks up where it stopped, unless `startOver`.
+    public func readOnThisMac(_ id: UUID, startOver: Bool = false) {
         guard vault != nil, !localQueue.contains(id) else { return }
+        if startOver {
+            try? vault?.clearProgress(pageID: id)
+            pagesWithProgress.remove(id)
+        }
         flushEdits()
         localQueue.append(id)
         try? vault?.setStatus(pageID: id, status: .reading)
@@ -314,18 +415,21 @@ extension AppModel {
                 session.setPhase(.findingWords)
                 let reader = LocalReader(server: server, candidates: CandidateMaker(words: vocabulary),
                                          settings: session.settings)
-                let result = try await reader.read(jpeg: jpeg) { event in
+                // Progress is saved with the page as each line finishes, and whenever she fixes a word.
+                let saved = try? vault.progress(pageID: id)
+                session.onProgress = { [weak self] progress in
+                    guard let self, let vault = self.vault, self.localQueue.contains(id) else { return }
+                    try? vault.saveProgress(pageID: id, progress: progress)
+                    self.pagesWithProgress.insert(id)
+                }
+                let result = try await reader.read(jpeg: jpeg, resume: saved) { event in
                     await MainActor.run { session.apply(event) }
                 }
                 try Task.checkCancellation()
                 // The page may have been deleted or replaced while it was being read.
                 if localQueue.contains(id) {
-                    pendingEdits[id] = nil
                     // Words she fixed in the window while it read.
-                    let final = result.applying(session.edits)
-                    try vault.saveReading(pageID: id, transcription: LocalReader.transcription(of: final.text,
-                                                                                               notes: final.notes))
-                    texts[id] = final.text
+                    try saveLocalReading(result.applying(session.edits), pageID: id)
                 }
                 session.setPhase(.done)
             } catch is CancellationError {
@@ -354,6 +458,16 @@ extension AppModel {
         }
     }
 
+    /// Saves a finished reading on this Mac as the page's text, replacing any reading saved partway.
+    public func saveLocalReading(_ result: LocalReadResult, pageID: UUID) throws {
+        guard let vault else { throw VaultError.locked }
+        pendingEdits[pageID] = nil
+        try vault.saveReading(pageID: pageID, transcription: LocalReader.transcription(of: result.text, notes: result.notes))
+        pagesWithProgress.remove(pageID)
+        texts[pageID] = result.text
+        try reload()
+    }
+
     /// Words on a page that a reading on this Mac changed or wasn't sure of, where they are in its text now.
     public func wordNotes(pageID: UUID) -> [(note: WordNote, range: NSRange)] {
         guard let notes = page(id: pageID)?.structure?.wordNotes, let text = texts[pageID] else { return [] }
@@ -364,6 +478,7 @@ extension AppModel {
     /// underline goes away.
     public func resolve(_ note: WordNote, pageID: UUID, replacement: String?) {
         guard let vault, let notes = page(id: pageID)?.structure?.wordNotes else { return }
+        if focusedWord?.note == note { focusedWord = nil }
         if let replacement, let text = texts[pageID], let changed = WordNote.replacing(note, with: replacement, in: text) {
             editText(changed, pageID: pageID)
         }

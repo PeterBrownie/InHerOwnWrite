@@ -7,13 +7,45 @@ public struct PageLayout: Sendable, Equatable {
     public var lines: [LayoutLine]
     /// A printed or handwritten page number, left out of `lines`.
     public var pageNumber: Int?
+    /// How far the photo was turned to level its lines before they were found, in radians, counterclockwise
+    /// as Vision measures slant. The rectangles refer to the turned photo.
+    public var tilt: Double
+    /// The photo's width over its height.
+    public var aspect: Double
 
-    public init(lines: [LayoutLine], pageNumber: Int? = nil) {
+    public init(lines: [LayoutLine], pageNumber: Int? = nil, tilt: Double = 0, aspect: Double = 1) {
         self.lines = lines
         self.pageNumber = pageNumber
+        self.tilt = tilt
+        self.aspect = aspect
     }
 
     public var wordCount: Int { lines.reduce(0) { $0 + $1.words.count } }
+
+    /// A rectangle of the levelled page as four corners on the photo as saved, normalized with the origin at
+    /// the top left, starting at the top left and going clockwise. The page is levelled by turning it about
+    /// its center without changing its size, so this turns the corners back.
+    public func photoOutline(of box: CGRect) -> [CGPoint] {
+        let corners = [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                       CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)]
+        guard tilt != 0 else { return corners }
+        // In pixels of a photo one unit tall, with y pointing down, the levelled page is the photo turned by
+        // the tilt; going back is a turn by minus the tilt.
+        let cosine = cos(-tilt), sine = sin(-tilt)
+        return corners.map { point in
+            let x = (point.x - 0.5) * aspect, y = point.y - 0.5
+            return CGPoint(x: (x * cosine - y * sine) / aspect + 0.5, y: x * sine + y * cosine + 0.5)
+        }
+    }
+
+    /// Identifies a layout, so a reading saved partway can tell whether it still lines up with the page.
+    public var key: String {
+        lines.map { line in
+            line.words.map { word in
+                String(format: "%@@%.2f,%.2f", word.text, word.box.midX, word.box.midY)
+            }.joined(separator: " ")
+        }.joined(separator: "\n")
+    }
 }
 
 public struct LayoutLine: Sendable, Equatable {
@@ -57,9 +89,11 @@ public enum PageLayoutFinder {
     public static func read(_ original: CGImage) async throws -> (layout: PageLayout, image: CGImage) {
         var image = original
         var overview = try await recognize(image)
+        var turned = 0.0
         let tilt = Straightener.tilt(of: overview, width: image.width, height: image.height)
         if abs(tilt) > 0.004, let level = Straightener.rotate(image, by: -tilt) {
             image = level
+            turned = tilt
             overview = try await recognize(image)
         }
         let found = overview.compactMap { observation -> FoundText? in
@@ -118,7 +152,8 @@ public enum PageLayoutFinder {
                 kept.remove(at: index)
             }
         }
-        return (PageLayout(lines: kept, pageNumber: pageNumber), image)
+        return (PageLayout(lines: kept, pageNumber: pageNumber, tilt: turned,
+                           aspect: Double(original.width) / Double(max(original.height, 1))), image)
     }
 
     static func recognize(_ image: CGImage) async throws -> [RecognizedTextObservation] {
@@ -322,7 +357,7 @@ public enum Straightener {
     }
 
     /// Rotates around the center, keeping the size. Corners are filled with the page's own edge color.
-    static func rotate(_ image: CGImage, by radians: Double) -> CGImage? {
+    public static func rotate(_ image: CGImage, by radians: Double) -> CGImage? {
         let width = image.width, height = image.height
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(),

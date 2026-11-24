@@ -131,6 +131,13 @@ read each line more than once, and their differences become options for the mode
 - **On the messy-handwriting page:** Vision alone made six errors; Quick fixed three of them and added one
   (a real-word swap), for four.
 
+- **Resuming:** a reading on this Mac is saved with the page, encrypted, as each line finishes and whenever
+  a word is fixed: the decided words, their notes, the match scores so far, and her fixes. Reading the page
+  again (**Resume on This Mac**) finds the lines again, about 5 seconds, and skips the finished lines when
+  the layout matches word for word; otherwise it starts over. **Start Reading on This Mac Over** in the page
+  menu discards it, and any finished reading clears it. On the invented page, resuming after the first two
+  lines made 135 decisions instead of 164 and gave the same text.
+
 ## Scribbled-out writing
 
 OCR reads scribbles as stray letters or skips them, so they are found from the ink: a connected blot whose
@@ -148,6 +155,19 @@ ignored. Scribbles become "###", as in readings from Claude.
   Correction. The notes are saved with the page and drop off once the word is changed.
 - Words can also be fixed in the reading window while the page is still being read; the fixes are applied
   when the page is saved.
+- **Removing a word** that isn't on the page: in the reading window, empty a word's field and choose Remove.
+  It stays struck through, with Restore, until the page is saved; then it's dropped, and notes on later words
+  in its line move back by one so their marks stay on the right word.
+- **Where each word is:** a noted word carries its outline on the photo as saved. The reader levels the page
+  by turning it about its center, so the word's box on the levelled page is turned back by the same angle,
+  which gives four corners on the photo. That way the page view needs no levelled copy of the photo.
+  Clicking a marked word outlines it on the photo; clicking a word in the reading window outlines it there.
+- **Coloring the ink:** with Show Reading Confidence on, the ink of each noted word is recolored on the photo,
+  red for words the model changed and green for close calls, in the page view and live in the reading
+  window. Within the word's outline, a pixel is ink when it is darker than 55% of the way from the paper
+  (the 75th percentile of the outline) to the pen (the 2nd percentile), so faint show-through and the facing
+  page's ink stay uncolored. Outlines are Vision's word boxes; on the invented pages they held each word's
+  ink without catching neighbors. Not yet judged on cursive.
 - With Accurate Line Breaks off, edits made to the flowing paragraphs are carried back to the text as written,
   so line breaks stay as she wrote them.
 
@@ -167,31 +187,8 @@ ignored. Scribbles become "###", as in readings from Claude.
 
 Not started. Listed so they aren't forgotten.
 
-- **Color the handwriting itself by confidence.** Instead of underlining words in the text, recolor the ink in
-  the page photo: within each word's box (straightened and flattened, as the reader sees it), find the pixels
-  that are ink for that word (the same ink threshold the scribble and pitch finders use, limited to the word's
-  line band so neighbors' ascenders and descenders aren't caught), and tint them with the confidence color:
-  green for close calls, the accent color for words the model changed. Shown over the page photo in the
-  reader and the reading window, with the same toggle as Show Reading Confidence. Open questions: whether the
-  word boxes from strip reading are tight enough on cursive, and how to keep faint ink from the facing page
-  or show-through out of the tint.
 - **Test Clef-flash (9B) against MiniCPM-OCR-Jev.** Clef-flash reads images and scores many options in one
   pass, which could replace one request per option. Compare speed, memory, and accuracy on the same pages.
-- **Resume a local reading after quitting.** Today, quitting, sleep, or the idle lock stops a reading and
-  loses that page's progress: the words decided so far and any fixes made in the reading window. The page
-  goes back to waiting and must be read again from the start. Instead, save progress with the page,
-  encrypted, as each line finishes: the decided words with their confidence and notes, and her fixes. When
-  the page is read again, find the lines (about 5 seconds; the same photo gives the same layout) and skip
-  every word already decided. If the layout no longer matches, for example because the photo was
-  replaced, start over.
-- **Remove a word that isn't on the page while reading.** In the reading window's text so far, clicking a
-  word, emptying the field, and choosing Fix (shown as Remove when empty) should drop the word. Until the
-  page is saved, show it struck through with a Restore button. When saving, drop emptied words, and move
-  notes on later words in the same line back by one so their highlights stay on the right word.
-- **Show a clicked word on the page photo.** Clicking a word in the reading window's text so far, or a marked
-  word in the page text afterward, should outline that word on the photo, using the word box from the
-  reading. For the page view this means saving each word's box with the page (with the word notes), and
-  the photo pane needs the same straightened, flattened image the boxes were measured on.
 - **Catch scribbles drawn as loose coils.** The solid-core test misses them; they look like letters by fill
   and solidity. Stroke crossings per area, or the share of the blot that Vision reads as no text, might
   separate them.

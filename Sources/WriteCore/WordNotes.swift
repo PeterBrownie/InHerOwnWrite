@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A word the decision model changed, or wasn't sure of, with the other spellings it weighed. Words are
@@ -16,14 +17,19 @@ public struct WordNote: Codable, Hashable, Sendable, Identifiable {
     public var options: [String]
     /// The model's share for the saved word, from 0 to 1.
     public var confidence: Double
+    /// Where the word is written on the page photo as saved: four corners, normalized with the origin at the
+    /// top left, clockwise from the top left. Missing on notes saved before words were placed.
+    public var outline: [CGPoint]?
 
-    public init(line: Int, word: Int, text: String, read: String, options: [String], confidence: Double) {
+    public init(line: Int, word: Int, text: String, read: String, options: [String], confidence: Double,
+                outline: [CGPoint]? = nil) {
         self.line = line
         self.word = word
         self.text = text
         self.read = read
         self.options = options
         self.confidence = confidence
+        self.outline = outline
     }
 
     public var id: String { "\(line):\(word):\(text)" }

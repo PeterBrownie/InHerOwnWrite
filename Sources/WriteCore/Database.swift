@@ -68,6 +68,10 @@ final class Database {
                 body BLOB NOT NULL,
                 image BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS progress (
+                id TEXT PRIMARY KEY,
+                record BLOB NOT NULL
+            );
             """)
     }
 

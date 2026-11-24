@@ -125,6 +125,22 @@ func runLocalModelCheck() async -> Bool {
             for line in lines { print("    | \(line)") }
             check("\(depth.rawValue) reading keeps every line", lines.count == handwrittenLines.filter { !$0.isEmpty }.count)
             check("\(depth.rawValue) reading is at least as good as Vision alone", exact >= baseline)
+
+            // Stopped after two lines, then read again: the two lines are kept and the rest is read the same.
+            if let partway = await counter.progress(afterLines: 2) {
+                let again = DecisionCounter()
+                let resumed = try await reader.read(jpeg: jpeg, resume: partway) { event in
+                    await again.record(event)
+                }.text
+                let (resumedDecisions, _, _) = await again.totals()
+                print("  resumed after 2 lines: \(resumedDecisions) decisions")
+                check("\(depth.rawValue) reading resumed partway gives the same text", resumed == text)
+                let wasResumed = await again.wasResumed
+                check("\(depth.rawValue) reading resumed partway skips the lines already read",
+                      resumedDecisions < decisions && wasResumed)
+            } else {
+                check("\(depth.rawValue) reading saves progress line by line", false)
+            }
         }
     } catch {
         check("local reading runs: \(error.localizedDescription)", false)
@@ -144,9 +160,20 @@ actor DecisionCounter {
             if wasCached { cached += 1 } else { decisions += 1 }
         case .lettersMoved:
             changed += 1
+        case .lineFinished(_, let progress):
+            saved.append(progress)
+        case .resumed:
+            wasResumed = true
         default:
             break
         }
+    }
+
+    private var saved: [LocalReadProgress] = []
+    private(set) var wasResumed = false
+
+    func progress(afterLines count: Int) -> LocalReadProgress? {
+        saved.first { $0.lines.count == count }
     }
 
     func totals() -> (Int, Int, Int) { (decisions, cached, changed) }
@@ -402,6 +429,35 @@ func runEditingChecks(in directory: URL) throws {
     check("fixes made while reading are saved", fixed.text == "We went to the lake\nlater on")
     check("a fixed word's note is dropped", fixed.notes.isEmpty)
 
+    // Words removed in the reading window because they aren't on the page.
+    let stray = LocalReadResult(text: "We xx went to tbe lake\nlater on", notes: [
+        WordNote(line: 0, word: 1, text: "xx", read: "xx", options: [], confidence: 0.2),
+        WordNote(line: 0, word: 4, text: "tbe", read: "the", options: ["the"], confidence: 0.4),
+        WordNote(line: 1, word: 1, text: "on", read: "on", options: [], confidence: 0.3),
+    ])
+    let cleaned = stray.applying([0: [1: ""]])
+    check("a removed word is left out", cleaned.text == "We went to tbe lake\nlater on")
+    check("a removed word's note goes with it", !cleaned.notes.contains { $0.text == "xx" })
+    check("later notes in the line move back to stay on their word",
+          cleaned.notes.first { $0.text == "tbe" }.map { WordNote.locate([$0], in: cleaned.text).first?.note.word == 3 } == true
+            && cleaned.notes.first { $0.text == "tbe" }?.word == 3)
+    check("notes on other lines stay put", cleaned.notes.first { $0.text == "on" }?.word == 1)
+
+    // A reading stopped partway is saved with the page, encrypted, and cleared once a reading finishes.
+    let progress = LocalReadProgress(layoutKey: "key", lines: [[.init(text: "We", confidence: 0.9, changed: false)]],
+                                     notes: [note], bestMatches: [0.04], edits: [0: [0: "Wee"], 2: [1: ""]])
+    try vault.saveProgress(pageID: page.id, progress: progress)
+    check("saves a reading partway", try vault.progress(pageID: page.id) == progress)
+    check("knows which pages have a reading partway", try vault.pagesWithProgress() == [page.id])
+    try vault.saveReading(pageID: page.id, transcription: LocalReader.transcription(of: text))
+    check("a finished reading clears the saved progress", try vault.progress(pageID: page.id) == nil)
+    try vault.saveProgress(pageID: page.id, progress: progress)
+    try vault.deletePage(id: page.id)
+    check("deleting a page deletes its saved progress", try vault.pagesWithProgress().isEmpty)
+    let raw = try Data(contentsOf: Vault.databaseURL(in: directory.appendingPathComponent("notes")))
+    check("saved progress isn't readable on disk", !fileContains(Vault.databaseURL(in: directory.appendingPathComponent("notes")),
+                                                                  Data("layoutKey".utf8)) && !raw.isEmpty)
+
     // Apostrophes Vision dropped or read as a letter.
     check("offers didn't for didnt", CandidateMaker.apostropheOptions(for: "didnt") == ["didn't"])
     check("offers I'm for Im", CandidateMaker.apostropheOptions(for: "Im") == ["I'm"])
@@ -544,4 +600,86 @@ func darkCenter(_ image: CGImage) -> CGPoint {
     }
     guard count > 0 else { return CGPoint(x: -1, y: -1) }
     return CGPoint(x: sumX / count / Double(width), y: sumY / count / Double(height))
+}
+
+/// Words placed back on the photo as saved, and their ink colored by confidence.
+@MainActor
+func runWordPlacementChecks() async throws {
+    print("\nPlacing words on the photo")
+    // A dot on a page, levelled the way the reader levels a tilted page: the dot's place on the levelled page
+    // turns back to its place on the photo.
+    let width = 1000, height = 1400
+    let dot = CGPoint(x: 700, y: 300)
+    let drawing = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    drawing.setFillColor(CGColor(gray: 1, alpha: 1))
+    drawing.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    drawing.setFillColor(CGColor(gray: 0, alpha: 1))
+    drawing.fillEllipse(in: CGRect(x: dot.x - 7, y: Double(height) - dot.y - 7, width: 14, height: 14))
+    let photo = drawing.makeImage()!
+    for tilt in [0.06, -0.09] {
+        let level = Straightener.rotate(photo, by: -tilt)!
+        let found = darkCenter(level)
+        let layout = PageLayout(lines: [], tilt: tilt, aspect: Double(width) / Double(height))
+        let outline = layout.photoOutline(of: CGRect(x: found.x - 0.001, y: found.y - 0.001, width: 0.002, height: 0.002))
+        let sumX: Double = outline.reduce(0) { $0 + $1.x }, sumY: Double = outline.reduce(0) { $0 + $1.y }
+        let back = CGPoint(x: sumX / 4 * Double(width), y: sumY / 4 * Double(height))
+        check(String(format: "a word on a page levelled by %.2f turns back to its place on the photo", tilt),
+              hypot(back.x - dot.x, back.y - dot.y) < 3)
+    }
+
+    // Dark strokes in a word's outline are colored; faint marks and ink outside it aren't.
+    let page = CGContext(data: nil, width: 400, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
+                         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    page.setFillColor(CGColor(gray: 0.95, alpha: 1))
+    page.fill(CGRect(x: 0, y: 0, width: 400, height: 200))
+    page.setFillColor(CGColor(gray: 0.1, alpha: 1))
+    page.fill(CGRect(x: 40, y: 80, width: 60, height: 8))      // a stroke in the word
+    page.fill(CGRect(x: 300, y: 80, width: 60, height: 8))     // a stroke of another word
+    page.setFillColor(CGColor(gray: 0.78, alpha: 1))
+    page.fill(CGRect(x: 120, y: 80, width: 40, height: 8))     // show-through, inside the word's box
+    let image = page.makeImage()!
+    let box = CGRect(x: 0.05, y: 0.3, width: 0.45, height: 0.4)
+    let overlay = InkTint.overlay(for: image, regions: [InkTint.Region(box: box, red: 1, green: 0, blue: 0)])
+    func alpha(_ x: Int, _ yFromTop: Int) -> Int {
+        guard let overlay, let data = overlay.dataProvider?.data as Data? else { return -1 }
+        return Int(data[yFromTop * overlay.bytesPerRow + x * 4 + 3])
+    }
+    // Drawing rows count from the bottom; the strokes sit 116 to 120 from the top.
+    check("colors the word's ink", alpha(70, 116) > 200)
+    check("leaves the paper clear", alpha(70, 60) == 0)
+    check("leaves faint show-through clear", alpha(140, 116) == 0)
+    check("leaves other words alone", alpha(330, 116) == 0)
+    check("nothing to color gives no overlay", InkTint.overlay(for: image, regions: []) == nil)
+
+    // Removing a word in the reading window, and putting it back.
+    let session = LocalReadSession(pageID: UUID(), pageNumber: 1, journalName: "Check", photo: nil, settings: .init())
+    let words = ["We", "xx", "walked"].enumerated().map { index, text in
+        LayoutWord(text: text, alternatives: [], box: CGRect(x: 0.1 + Double(index) * 0.2, y: 0.1, width: 0.15, height: 0.05),
+                   letters: [])
+    }
+    let layout = PageLayout(lines: [LayoutLine(box: CGRect(x: 0.1, y: 0.1, width: 0.6, height: 0.05), words: words)])
+    session.apply(.started(layout, image: photo))
+    var saved: [LocalReadProgress] = []
+    session.onProgress = { saved.append($0) }
+    for (index, word) in words.enumerated() {
+        session.apply(.wordFinished(line: 0, word: index, text: word.text, confidence: 0.9))
+    }
+    session.edit(line: 0, word: 1, to: "  ")
+    check("an emptied word is removed", session.lines[0][1].removed && session.transcript == "We walked")
+    check("removing a word saves progress", saved.last?.edits[0]?[1] == "")
+    session.restore(line: 0, word: 1)
+    check("a removed word can be restored", !session.lines[0][1].removed && session.transcript == "We xx walked"
+          && session.edits.isEmpty)
+
+    // Picking up a reading stopped partway.
+    let resumed = LocalReadSession(pageID: UUID(), pageNumber: 1, journalName: "Check", photo: nil, settings: .init())
+    resumed.apply(.started(layout, image: photo))
+    resumed.apply(.resumed(LocalReadProgress(layoutKey: layout.key,
+                                             lines: [[.init(text: "We", confidence: 0.9, changed: false),
+                                                      .init(text: "xx", confidence: 0.3, changed: false),
+                                                      .init(text: "walked", confidence: 0.8, changed: true)]],
+                                             edits: [0: [1: ""]])))
+    check("a resumed reading shows the lines already read", resumed.wordsDone == 3 && resumed.transcript == "We walked")
+    check("a resumed reading keeps her fixes", resumed.lines[0][1].removed && resumed.lines[0][2].changed)
 }

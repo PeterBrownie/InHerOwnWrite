@@ -12,6 +12,8 @@ struct JournalTextEditor: NSViewRepresentable {
     var notes: [(note: WordNote, range: NSRange)] = []
     /// Called with a replacement, or nil to keep the word as read.
     var onResolve: (WordNote, String?) -> Void = { _, _ in }
+    /// Called with the marked word just clicked, to show it on the photo, or nil when a click lands elsewhere.
+    var onFocus: (WordNote?) -> Void = { _ in }
 
     static let attributes: [NSAttributedString.Key: Any] = {
         let base = NSFont.systemFont(ofSize: 15)
@@ -61,6 +63,7 @@ struct JournalTextEditor: NSViewRepresentable {
         textView.isEditable = isEditable
         context.coordinator.notes = notes
         context.coordinator.onResolve = onResolve
+        context.coordinator.onFocus = onFocus
         context.coordinator.mark(textView)
         return scrollView
     }
@@ -68,6 +71,7 @@ struct JournalTextEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.text = $text
         context.coordinator.onResolve = onResolve
+        context.coordinator.onFocus = onFocus
         guard let textView = scrollView.documentView as? NSTextView else { return }
         var needsMarking = context.coordinator.notes.map(\.range) != notes.map(\.range)
             || context.coordinator.notes.map(\.note) != notes.map(\.note)
@@ -91,6 +95,7 @@ struct JournalTextEditor: NSViewRepresentable {
         var text: Binding<String>
         var notes: [(note: WordNote, range: NSRange)] = []
         var onResolve: (WordNote, String?) -> Void = { _, _ in }
+        var onFocus: (WordNote?) -> Void = { _ in }
 
         init(text: Binding<String>) {
             self.text = text
@@ -172,10 +177,12 @@ final class NotedTextView: NSTextView {
         if event.clickCount == 1, let coordinator, isEditable,
            let found = coordinator.note(at: index) ?? coordinator.note(at: index - 1),
            let rect = firstRect(for: found.range), rect.insetBy(dx: -2, dy: -3).contains(point) {
+            coordinator.onFocus(found.note)
             let menu = coordinator.menu(for: found, in: self)
             menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: rect.maxY + 4), in: self)
             return
         }
+        coordinator?.onFocus(nil)
         super.mouseDown(with: event)
     }
 

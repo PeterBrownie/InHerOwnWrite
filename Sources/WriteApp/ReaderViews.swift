@@ -178,9 +178,15 @@ private struct PageColumn: View {
                     .disabled(!model.hasAPIKey)
             }
             if page.status != .reading {
-                Button("Read on This Mac") { model.readOnThisMac(page.id) }
-                    .controlSize(.small)
-                    .help("Read this page with the decision model on this Mac, and watch it work")
+                if model.hasLocalProgress(page.id) {
+                    Button("Resume on This Mac") { model.readOnThisMac(page.id) }
+                        .controlSize(.small)
+                        .help("Pick up the reading on this Mac where it stopped")
+                } else {
+                    Button("Read on This Mac") { model.readOnThisMac(page.id) }
+                        .controlSize(.small)
+                        .help("Read this page with the decision model on this Mac, and watch it work")
+                }
             } else if model.localSession?.pageID == page.id {
                 Button("Watch") { model.showLocalReader() }
                     .controlSize(.small)
@@ -189,6 +195,9 @@ private struct PageColumn: View {
                 if page.status == .done {
                     Button("Read Again…") { confirmReread = true }
                         .disabled(!model.hasAPIKey)
+                }
+                if model.hasLocalProgress(page.id) && page.status != .reading {
+                    Button("Start Reading on This Mac Over") { model.readOnThisMac(page.id, startOver: true) }
                 }
                 Button("Move…") { isMoving = true }
                 Divider()
@@ -216,7 +225,8 @@ private struct PageColumn: View {
                 ),
                 isEditable: page.status != .reading,
                 notes: model.showConfidence ? model.wordNotes(pageID: page.id) : [],
-                onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) }
+                onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) },
+                onFocus: { note in model.focusWord(note, pageID: page.id) }
             )
             .padding(4)
             .background(Theme.card)
@@ -229,7 +239,8 @@ private struct PageColumn: View {
                 ),
                 isEditable: page.status != .reading,
                 notes: model.showConfidence ? model.reflowedWordNotes(pageID: page.id) : [],
-                onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) }
+                onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) },
+                onFocus: { note in model.focusWord(note, pageID: page.id) }
             )
             .padding(4)
             .background(Theme.card)
@@ -346,8 +357,24 @@ private struct PhotoPane: View {
     @EnvironmentObject private var model: AppModel
     let pageID: UUID
     @ViewState private var image: NSImage?
+    @ViewState private var tint: CGImage?
     @ViewState private var scale: CGFloat = 1
     @ViewState private var gestureScale: CGFloat = 1
+
+    /// Ink to color: words a reading on this Mac changed, and words it wasn't sure of.
+    private var tintRegions: [InkTint.Region] {
+        guard model.showConfidence else { return [] }
+        return model.wordNotes(pageID: pageID).compactMap { item -> InkTint.Region? in
+            guard let outline = item.note.outline else { return nil }
+            let color = item.note.wasChanged ? InkTint.changed : InkTint.closeCall
+            return InkTint.Region(outline: outline, red: color.red, green: color.green, blue: color.blue)
+        }
+    }
+
+    private var focused: [CGPoint]? {
+        guard let word = model.focusedWord, word.pageID == pageID else { return nil }
+        return word.note.outline
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -355,12 +382,23 @@ private struct PhotoPane: View {
                 ScrollView([.horizontal, .vertical]) {
                     if let image {
                         let fitted = fittedSize(image.size, in: proxy.size)
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .frame(width: fitted.width * scale * gestureScale,
-                                   height: fitted.height * scale * gestureScale)
-                            .frame(minWidth: proxy.size.width, minHeight: proxy.size.height)
+                        let size = CGSize(width: fitted.width * scale * gestureScale,
+                                          height: fitted.height * scale * gestureScale)
+                        ZStack(alignment: .topLeading) {
+                            Image(nsImage: image)
+                                .resizable()
+                                .interpolation(.high)
+                            if let tint {
+                                Image(decorative: tint, scale: 1)
+                                    .resizable()
+                                    .interpolation(.high)
+                            }
+                            if let focused {
+                                WordOutline(corners: focused)
+                            }
+                        }
+                        .frame(width: size.width, height: size.height)
+                        .frame(minWidth: proxy.size.width, minHeight: proxy.size.height)
                     }
                 }
                 .gesture(MagnifyGesture()
@@ -381,11 +419,56 @@ private struct PhotoPane: View {
         }
         .background(Theme.paper)
         .task(id: pageID) { image = model.image(for: pageID) }
+        .task(id: TintKey(image: image.map(ObjectIdentifier.init), regions: tintRegions)) {
+            let regions = tintRegions
+            guard !regions.isEmpty, let photo = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                tint = nil
+                return
+            }
+            let made = await Task.detached(priority: .userInitiated) {
+                InkTint.overlay(for: photo, regions: regions)
+            }.value
+            guard !Task.isCancelled else { return }
+            tint = made
+        }
+    }
+
+    private struct TintKey: Equatable {
+        let image: ObjectIdentifier?
+        let regions: [InkTint.Region]
     }
 
     private func fittedSize(_ image: CGSize, in box: CGSize) -> CGSize {
         guard image.width > 0, image.height > 0 else { return box }
         let ratio = min(box.width / image.width, box.height / image.height)
         return CGSize(width: image.width * ratio, height: image.height * ratio)
+    }
+}
+
+/// A word outlined on the page photo, with corners normalized to the photo.
+struct WordOutline: View {
+    let corners: [CGPoint]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let points = corners.map { CGPoint(x: $0.x * proxy.size.width, y: $0.y * proxy.size.height) }
+            let shape = Path { path in
+                guard let first = points.first else { return }
+                // A little room around the word, out from its middle.
+                let middle = CGPoint(x: points.map(\.x).reduce(0, +) / Double(points.count),
+                                     y: points.map(\.y).reduce(0, +) / Double(points.count))
+                func out(_ point: CGPoint) -> CGPoint {
+                    let dx = point.x - middle.x, dy = point.y - middle.y
+                    let length = max(hypot(dx, dy), 1)
+                    return CGPoint(x: point.x + dx / length * 5, y: point.y + dy / length * 5)
+                }
+                path.move(to: out(first))
+                for point in points.dropFirst() { path.addLine(to: out(point)) }
+                path.closeSubpath()
+            }
+            shape.stroke(Color.white.opacity(0.9), lineWidth: 4)
+            shape.stroke(Color.blue, lineWidth: 2)
+        }
+        .allowsHitTesting(false)
     }
 }

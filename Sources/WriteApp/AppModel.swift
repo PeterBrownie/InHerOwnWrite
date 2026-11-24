@@ -107,6 +107,21 @@ public final class AppModel: ObservableObject {
     private var readQueue: [UUID] = []
     private var readerTask: Task<Void, Never>?
     var pendingEdits: [UUID: String] = [:]
+    /// The marked word last clicked in a page's text, outlined on its photo.
+    @Published public var focusedWord: FocusedWord?
+
+    public struct FocusedWord: Equatable {
+        public let pageID: UUID
+        public let note: WordNote
+    }
+
+    public func focusWord(_ note: WordNote?, pageID: UUID) {
+        let next = note.map { FocusedWord(pageID: pageID, note: $0) }
+        if focusedWord != next { focusedWord = next }
+    }
+
+    /// Pages with a reading on this Mac saved partway.
+    @Published public internal(set) var pagesWithProgress: Set<UUID> = []
     private var editSaveTask: Task<Void, Never>?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var idleTimer: Timer?
@@ -194,6 +209,8 @@ public final class AppModel: ObservableObject {
         journals = []
         pages = []
         texts = [:]
+        pagesWithProgress = []
+        focusedWord = nil
         entries = []
         selectedJournalID = nil
         selectedPageID = nil
@@ -678,6 +695,7 @@ public final class AppModel: ObservableObject {
         guard let vault else { return }
         journals = try vault.journals()
         pages = try vault.pages()
+        pagesWithProgress = (try? vault.pagesWithProgress()) ?? []
         let currentTexts = texts
         entries = EntryBuilder.build(pages: pages, journalOrder: journals.map(\.id)) { currentTexts[$0] ?? "" }
         if let selectedEntryID, !entries.contains(where: { $0.id == selectedEntryID }) {

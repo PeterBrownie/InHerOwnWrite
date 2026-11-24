@@ -578,6 +578,32 @@ func runRender(output: URL, sample: URL?) async throws {
                  to: output.appendingPathComponent("11-local-live.png"))
     await render(LocalSessionView(session: session).environmentObject(model), size: CGSize(width: 1320, height: 840),
                  to: output.appendingPathComponent("11-local-live-dark.png"), dark: true)
+    // A word removed and another clicked, shown on the page.
+    session.edit(line: 2, word: 3, to: "")
+    session.selected = .init(line: 2, word: 2)
+    await render(LocalSessionView(session: session).environmentObject(model), size: CGSize(width: 1320, height: 840),
+                 to: output.appendingPathComponent("11b-local-removed-selected.png"))
+
+    // A page read on this Mac, with a changed word and a close call colored on the photo, and one outlined.
+    if let first = model.pages.first {
+        let image = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(photo as CFData, nil)!, 0, nil)!
+        let (layout, _) = try await PageLayoutFinder.read(image)
+        let text = layout.lines.map { $0.words.map(\.text).joined(separator: " ") }.joined(separator: "\n")
+        var notes: [WordNote] = []
+        for (lineIndex, wordIndex, changed) in [(1, 1, true), (3, 2, false), (4, 0, false)]
+        where layout.lines.indices.contains(lineIndex) && layout.lines[lineIndex].words.indices.contains(wordIndex) {
+            let word = layout.lines[lineIndex].words[wordIndex]
+            notes.append(WordNote(line: lineIndex, word: wordIndex, text: word.text, read: changed ? word.text + "x" : word.text,
+                                  options: ["other"], confidence: changed ? 0.7 : 0.45,
+                                  outline: layout.photoOutline(of: word.box)))
+        }
+        try model.saveLocalReading(LocalReadResult(text: text, notes: notes), pageID: first.id)
+        model.selectedPageID = first.id
+        model.showConfidence = true
+        model.focusWord(notes.last, pageID: first.id)
+        await render(RootView().environmentObject(model).environmentObject(updater), size: CGSize(width: 1240, height: 800),
+                     to: output.appendingPathComponent("3e-confidence-on-photo.png"))
+    }
     model.lock()
     await render(RootView().environmentObject(model).environmentObject(updater), size: CGSize(width: 1100, height: 720),
                  to: output.appendingPathComponent("6-locked-dark.png"), dark: true)
@@ -798,6 +824,7 @@ if arguments.contains("--local") {
             await MainActor.run { runBannerChecks() }
             try await runRotationChecks()
             try runTiltedCropChecks()
+            try await runWordPlacementChecks()
             try await runPageScanChecks()
             try await runFlattenChecks()
             runUpdaterChecks()
