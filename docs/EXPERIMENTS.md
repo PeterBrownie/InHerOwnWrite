@@ -31,12 +31,26 @@ carries the crop, a rendered image of one candidate, and that candidate as text,
   (each option's score divided by the total) are used.
 - Memory while reading: about 2.9 GB resident, of which about 2.7 GB is the model files mapped from disk.
 
+**Clef-Flash (9B), first test, November 2026.** ggml-org's Q4_K_M build (6.7 GB, plus a 0.6 GB vision
+projector), in the same Homebrew `llama-server` and `/v1/systemone` API. Unlike MiniCPM-OCR-Jev, it scores
+every option of a `choice` question in one request, and returns a probability for each. It was sent only the
+word crop and the spellings as options, with no rendered candidate image. On 70 words from the invented pages
+(Bradley Hand and Savoye), each against five look-alike decoys in shuffled order:
+
+| Model | Right | Per word | Memory |
+| --- | --- | --- | --- |
+| MiniCPM-OCR-Jev, image tokens 8–32, six requests | 68 of 70 | 1,051 ms | about 2.9 GB |
+| Clef-Flash Q4_K_M, default image tokens, one request | 70 of 70 | 799 ms | 4.9 GB |
+
+Not yet tried: real handwriting, capped image tokens (the server didn't start with the caps used for
+MiniCPM), or using it inside the reader.
+
 Set aside:
 
 | Option | Why not |
 | --- | --- |
 | Text-only decision models (OpenDecision-Small 70M, Laya 421M, Tev1 0.8B, Strands Decider 2B) | They can't see the page; choosing letters from text alone is guessing from context. |
-| Image-capable choice models (Clef-flash 9B, pplx-decider 27B) | One pass could score many options, but 4 to 13 times larger, and not trained to compare handwriting with a reading. **Not yet tested;** Clef-flash may run in llama.cpp and is worth a head-to-head test. |
+| Image-capable choice models (Clef-flash 9B, pplx-decider 27B) | One pass could score many options, but 4 to 13 times larger, and not trained to compare handwriting with a reading. Clef-Flash has now had a first test (above); pplx-decider is untested. |
 | Tokz OpenDecision, PP-OCRv6 | Text-only classifier; and a recognizer that doesn't rank options (and reads handwriting poorly in its own benchmarks). |
 
 ### Speed
@@ -202,8 +216,10 @@ ignored. Scribbles become "###", as in readings from Claude.
 
 Not started. Listed so they aren't forgotten.
 
-- **Test Clef-flash (9B) against MiniCPM-OCR-Jev.** Clef-flash reads images and scores many options in one
-  pass, which could replace one request per option. Compare speed, memory, and accuracy on the same pages.
+- **Switch the decision model to Clef-Flash?** It did better than MiniCPM-OCR-Jev in a first test (below).
+  Before switching: get its image-token caps working (the server didn't come up with
+  `--image-min-tokens 8 --image-max-tokens 32`; not looked into), try it on real handwriting, and weigh
+  the 7.4 GB download and about 5 GB of memory against 2.7 GB.
 
 ## Known issues
 
