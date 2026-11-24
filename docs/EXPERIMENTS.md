@@ -247,6 +247,14 @@ Not started. Listed so they aren't forgotten.
   missing or extra letter actually occur.
 - **Try the ink tint on joined-up cursive.** It was checked on neat printing and on messy unruled writing;
   cursive word boxes may be looser.
+- **More analysis of entries.** Suggested alongside the Entries section (counts, per month and week,
+  averages, longest gap), waiting for a choice: which weekdays she writes most; time of day, from the times
+  already read in date headings; streaks of consecutive days, longest and current; entry length over time
+  and the longest entries; "on this day" in earlier years; when each name first appears and who comes up
+  most each month; words and pages written per month.
+- **Two pages with different heights.** A photo of both pages is cut with one frame around both, split at
+  the fold. When one page sits much higher than the other, each page's top and bottom could be found
+  separately instead.
 - **Scroll the photo to an outlined word.** When the photo pane is zoomed in, clicking a marked word outlines
   it but doesn't scroll it into view.
 

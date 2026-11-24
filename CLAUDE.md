@@ -39,16 +39,19 @@ Keep real photos and anything derived from them outside the repository, and dele
 ## Where things are
 
 - `Sources/WriteCore`: everything without UI. `Vault` (encrypted SQLite store), `Transcriber` (Claude),
-  `PagePhoto` (prepare, crop, rotate), `PageScan` (finding the page, fold, and page number), `PageFlattener`
+  `PagePhoto` (prepare, crop, rotate, date taken), `PageScan` (finding the page, fold, and page number;
+  which way up a photo goes; splitting a photo of both pages at the fold), `PageFlattener`
   (straightening curled lines), `Entries` (date headings, entries, reflowing text with a map back to the
-  written text), `WordNotes` (words a local reading changed or doubted).
+  written text), `Analysis` (word counts, timelines, entries per month and week), `WordNotes` (words a
+  local reading changed or doubted).
 - `Sources/WriteCore/LocalReading`: reading on the Mac. `PageLayout` (straightening, line pitch, reading in
   strips with Vision, letter splitting, scribbles), `Candidates` (look-alikes, dictionary, contractions,
   switching rules), `LocalReader` (the question loop, re-checks on other crops, notes), `DecisionServer`
   (model download, a private `llama-server` under a watchdog, `/v1/systemone` requests).
 - `Sources/WriteApp`: SwiftUI app. `AppModel` holds state; `LocalReading.swift` and `LocalReaderViews.swift`
-  are the reading-on-this-Mac queue and live window; `UploadSheet` has the crop editor; `JournalTextEditor`
-  draws and handles the confidence marks; `Updater` and `UpdateBanner` handle updates.
+  are the reading-on-this-Mac queue and live window; `UploadSheet` has the crop editor (with the fold line
+  for both pages) and the queue of photos dropped together; `JournalTextEditor` draws and handles the
+  confidence marks; `Updater` and `UpdateBanner` handle updates.
 - `Sources/WriteCheck`: the checks above, with `LocalChecks.swift` for the newer parts.
 
 ## Reading on this Mac, in brief
