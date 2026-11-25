@@ -239,16 +239,27 @@ public struct AnalysisSnapshot: Sendable {
     private static let maxPageBins = 30
     private static let shortMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
+    /// One person's mentions: how many in each unit, and the names as written there, for highlighting.
+    struct PersonCounts: Sendable {
+        var display: String
+        var perUnit: [Int]
+        var written: [Int: [String]]
+    }
+
     let units: [Unit]
     private let journalNames: [UUID: String]
     private let nameList: [String]
+    /// The people the names mean, by `PeopleDirectory.key` of their label ("Hannah K.", "Hannah (unsure which)").
+    private let persons: [String: PersonCounts]
     public let pageCount: Int
     public let entryCount: Int
     public let datedEntryCount: Int
     public let wordTotal: Int
     public let words: [WordStat]
 
-    public init(entries: [JournalEntry], includedPages: Set<UUID>, names: [String], journalNames: [UUID: String]) {
+    /// `people` says who each name means on each page; without it, each name counts as written.
+    public init(entries: [JournalEntry], includedPages: Set<UUID>, names: [String], people: PeopleDirectory? = nil,
+                journalNames: [UUID: String]) {
         var units: [Unit] = []
         var counts: [String: Int] = [:]
         var surfaces: [String: [String: Int]] = [:]
@@ -276,6 +287,7 @@ public struct AnalysisSnapshot: Sendable {
         self.units = units
         self.journalNames = journalNames
         nameList = names
+        persons = Self.countPersons(names: names, units: units, people: people)
         pageCount = Set(units.map(\.pageID)).count
         entryCount = entryIDs.count
         datedEntryCount = datedIDs.count
@@ -292,35 +304,75 @@ public struct AnalysisSnapshot: Sendable {
         words.filter { !hidden.contains($0.key) && (includeCommon || !CommonWords.all.contains($0.key)) }
     }
 
-    /// Names Claude found, counted wherever they appear in the chosen pages.
+    /// People named in the chosen pages, counted wherever their names appear. A name counts as the person it
+    /// means on that page ("Hannah" as "Hannah K." where she said so), and a first name that's part of a fuller
+    /// name written there ("Hannah Kim") counts once, as the fuller name.
     public func nameStats(hidden: Set<String>) -> [WordStat] {
-        var seen = Set<String>()
-        var stats: [WordStat] = []
-        for name in nameList {
-            let tokens = WordTokenizer.tokens(in: name)
-            let key = tokens.map(\.key).joined(separator: " ")
-            guard !key.isEmpty, seen.insert(key).inserted, !hidden.contains(key) else { continue }
-            let perUnit = units.map { Self.occurrences(of: tokens.map(\.key), in: $0.keys) }
-            let count = perUnit.reduce(0, +)
-            guard count > 0 else { continue }
-            let pages = Set(zip(units, perUnit).filter { $0.1 > 0 }.map(\.0.pageID)).count
-            stats.append(WordStat(key: key, display: tokens.map(\.surface).joined(separator: " "),
-                                  count: count, pageCount: pages))
+        persons.compactMap { key, person -> WordStat? in
+            let count = person.perUnit.reduce(0, +)
+            guard count > 0, !hidden.contains(key) else { return nil }
+            let pages = Set(zip(units, person.perUnit).filter { $0.1 > 0 }.map(\.0.pageID)).count
+            return WordStat(key: key, display: person.display, count: count, pageCount: pages)
         }
-        return stats.sorted { ($1.count, $0.key) < ($0.count, $1.key) }
+        .sorted { ($1.count, $0.key) < ($0.count, $1.key) }
     }
 
+    private static func countPersons(names: [String], units: [Unit], people: PeopleDirectory?) -> [String: PersonCounts] {
+        // Each name once, longest first, so a fuller name claims its words before a first name can.
+        var seen = Set<String>()
+        let written = names.compactMap { name -> (name: String, keys: [String])? in
+            let keys = WordTokenizer.tokens(in: name).map(\.key)
+            guard !keys.isEmpty, seen.insert(keys.joined(separator: " ")).inserted else { return nil }
+            return (name, keys)
+        }
+        .sorted { ($0.keys.count, $1.name) > ($1.keys.count, $0.name) }
+        var persons: [String: PersonCounts] = [:]
+        for (index, unit) in units.enumerated() {
+            var taken = [Bool](repeating: false, count: unit.keys.count)
+            for name in written {
+                var count = 0
+                var position = 0
+                while position + name.keys.count <= unit.keys.count {
+                    let span = position..<(position + name.keys.count)
+                    if Array(unit.keys[span]) == name.keys, !span.contains(where: { taken[$0] }) {
+                        span.forEach { taken[$0] = true }
+                        count += 1
+                        position += name.keys.count
+                    } else {
+                        position += 1
+                    }
+                }
+                guard count > 0 else { continue }
+                let label = people?.resolve(name.name, onPage: unit.pageID).label ?? name.name
+                let key = PeopleDirectory.key(label)
+                guard !key.isEmpty else { continue }
+                persons[key, default: PersonCounts(display: label, perUnit: [Int](repeating: 0, count: units.count),
+                                                   written: [:])].perUnit[index] += count
+                persons[key]?.written[index, default: []].append(name.keys.joined(separator: " "))
+            }
+        }
+        return persons
+    }
+
+    /// The person a looked-up term names, when it's one of the labels in the Names list.
+    private func person(_ text: String) -> PersonCounts? {
+        persons[PeopleDirectory.key(text)]
+    }
+
+    /// A word, phrase, or person: a label from the Names list ("Hannah K.") counts that person's mentions, under
+    /// whatever name was written.
     public func term(_ text: String) -> TermResult? {
         let tokens = WordTokenizer.tokens(in: text)
         guard !tokens.isEmpty else { return nil }
         let keys = tokens.map(\.key)
-        let perUnit = units.map { Self.occurrences(of: keys, in: $0.keys) }
+        let person = person(text)
+        let perUnit = person?.perUnit ?? units.map { Self.occurrences(of: keys, in: $0.keys) }
         let hits = zip(units, perUnit).filter { $0.1 > 0 }
         let undated = zip(units, perUnit).reduce(0) { total, pair in
             total + (Self.dayNumber(pair.0) == nil ? pair.1 : 0)
         }
         return TermResult(
-            display: tokens.map(\.surface).joined(separator: " "),
+            display: person?.display ?? tokens.map(\.surface).joined(separator: " "),
             total: perUnit.reduce(0, +),
             pageCount: Set(hits.map(\.0.pageID)).count,
             entryCount: Set(hits.map(\.0.entryID)).count,
@@ -344,10 +396,13 @@ public struct AnalysisSnapshot: Sendable {
         let keys = WordTokenizer.tokens(in: text).map(\.key)
         guard !keys.isEmpty else { return [] }
         let multipleJournals = Set(units.map(\.journalID)).count > 1
+        let person = person(text)
         return units.enumerated().compactMap { index, unit in
-            let count = Self.occurrences(of: keys, in: unit.keys)
+            let count = person?.perUnit[index] ?? Self.occurrences(of: keys, in: unit.keys)
             guard count > 0 else { return nil }
-            let (snippet, highlight) = Self.snippet(of: keys, in: unit.body)
+            // A person is highlighted under the name written here.
+            let shown = person?.written[index]?.first.map { $0.split(separator: " ").map(String.init) } ?? keys
+            let (snippet, highlight) = Self.snippet(of: shown, in: unit.body)
             return TermMatch(id: "\(index)", pageID: unit.pageID, pageNumber: unit.pageNumber,
                              journalName: multipleJournals ? journalNames[unit.journalID] : nil,
                              date: unit.date, count: count, snippet: snippet, highlight: highlight)

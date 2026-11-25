@@ -613,6 +613,28 @@ public final class AppModel: ObservableObject {
         attempt { try $0.setPerson(pageID: pageID, written: written, person: person) }
     }
 
+    /// How much room each journal takes on this Mac, with the whole vault file and the reading model, for
+    /// Settings. Journals come in the sidebar's order.
+    public func storageReport() -> StorageReport {
+        let journalOf = Dictionary(uniqueKeysWithValues: pages.map { ($0.id, $0.journalID) })
+        let sizes = (try? vault?.storage(journalOf: journalOf)) ?? [:]
+        let rows = journals.map { journal in
+            StorageReport.Row(id: journal.id, name: journal.name,
+                              pageCount: pages.filter { $0.journalID == journal.id }.count,
+                              bytes: sizes[journal.id] ?? 0)
+        }
+        let files = FileManager.default
+        let vaultFile = (try? files.attributesOfItem(atPath: Vault.databaseURL(in: directory).path))?[.size] as? Int
+        var modelBytes = 0
+        let models = directory.appendingPathComponent("Models", isDirectory: true)
+        if let items = files.enumerator(at: models, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) {
+            for case let url as URL in items {
+                modelBytes += (try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize ?? 0) ?? 0
+            }
+        }
+        return StorageReport(journals: rows, vaultFile: vaultFile, model: modelBytes > 0 ? modelBytes : nil)
+    }
+
     public func deletePage(id: UUID) {
         guard let vault else { return }
         do {
@@ -669,8 +691,10 @@ public final class AppModel: ObservableObject {
         let included = analysisPageIDs
         let names = pages.filter { included.contains($0.id) }.flatMap { $0.structure?.names ?? [] }
         let journalNames = Dictionary(uniqueKeysWithValues: journals.map { ($0.id, $0.name) })
+        let people = people
         return await Task.detached(priority: .userInitiated) {
-            AnalysisSnapshot(entries: entries, includedPages: included, names: names, journalNames: journalNames)
+            AnalysisSnapshot(entries: entries, includedPages: included, names: names, people: people,
+                             journalNames: journalNames)
         }.value
     }
 
@@ -863,4 +887,19 @@ public final class AppModel: ObservableObject {
             }
         }
     }
+}
+
+/// What Settings shows under Storage.
+public struct StorageReport: Sendable {
+    public struct Row: Identifiable, Sendable {
+        public let id: UUID
+        public let name: String
+        public let pageCount: Int
+        public let bytes: Int
+    }
+    public let journals: [Row]
+    /// The whole vault file, which also holds settings and room left by deleted pages.
+    public let vaultFile: Int?
+    /// The model downloaded for reading on this Mac, if it is.
+    public let model: Int?
 }

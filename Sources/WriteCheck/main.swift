@@ -193,6 +193,12 @@ func runVaultChecks(in directory: URL) throws {
     try vault.movePage(id: other.id, toJournal: journal.id, number: 200)
     check("moves a page", try vault.pages().first { $0.id == other.id }?.number == 200)
     check("frees the old number after a move", try !vault.pageExists(journalID: journal.id, number: 62))
+    let storagePages = try vault.pages()
+    let sizes = try vault.storage(journalOf: Dictionary(uniqueKeysWithValues: storagePages.map { ($0.id, $0.journalID) }))
+    // The first journal has two photos and the second one; each is stored encrypted, a little larger.
+    check("measures each journal's storage, photos included",
+          (sizes[journal.id] ?? 0) > 2 * photo.count && (sizes[second.id] ?? 0) > photo.count
+          && (sizes[second.id] ?? 0) < (sizes[journal.id] ?? 0))
 
     let url = Vault.databaseURL(in: directory)
     let jpegSample = photo.subdata(in: 2000..<2064)
@@ -400,6 +406,35 @@ func runEntryChecks() {
           twoWrens.resolve("Wren", onPage: plainWren.id) == .unsure(written: "Wren", choices: ["Wren Ames", "Wren K."])
           && twoWrens.people(on: plainWren).count == 1)
     check("a full name is its own person", twoWrens.resolve("Wren Ames", onPage: plainWren.id) == .person("Wren Ames"))
+
+    // Analysis counts people through those choices, not the name as written.
+    let peopleJournal = UUID()
+    let peopleTexts = ["Monday, May 4\nWren came over, and Wren Ames too.", "Tuesday, May 5\nWren called.",
+                       "Wednesday, May 6\nSaw Wren at the market."]
+    let peoplePages = [(["Wren", "Wren Ames"], nil), (["Wren"], ["wren": "Wren K."]), (["Wren"], nil)]
+        .enumerated().map { index, item -> PageInfo in
+            var structure = PageStructure(markers: [], names: item.0, text: peopleTexts[index])
+            structure.people = item.1
+            return PageInfo(id: UUID(), journalID: peopleJournal, number: index + 1, status: .done, problem: nil,
+                            wasCutOff: false, createdAt: Date(), updatedAt: Date(), structure: structure)
+        }
+    let byPerson = AnalysisSnapshot(
+        entries: EntryBuilder.build(pages: peoplePages, journalOrder: [peopleJournal]) { id in
+            peopleTexts[peoplePages.firstIndex { $0.id == id } ?? 0]
+        },
+        includedPages: Set(peoplePages.map(\.id)), names: peoplePages.flatMap { $0.structure?.names ?? [] },
+        people: PeopleDirectory(pages: peoplePages), journalNames: [:])
+    let personCounts = Dictionary(uniqueKeysWithValues: byPerson.nameStats(hidden: []).map { ($0.display, $0.count) })
+    check("names count as the person they mean on each page",
+          personCounts == ["Wren K.": 1, "Wren Ames": 1, "Wren (unsure which)": 2])
+    check("looking up a person counts their mentions", byPerson.term("Wren K.")?.total == 1
+          && byPerson.term("Wren (unsure which)")?.pageCount == 2)
+    let chosenMatches = byPerson.matches("Wren K.")
+    check("a person's mentions are found under the name written", chosenMatches.map(\.pageNumber) == [2]
+          && chosenMatches.first.map { match in
+              match.highlight.map { String(Array(match.snippet)[$0]) } == "Wren"
+          } == true)
+    check("typing the first name still finds every mention", byPerson.term("Wren")?.total == 4)
     let onlyPage4 = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:])
     check("limits analysis to chosen pages", onlyPage4.pageCount == 1 && onlyPage4.term("body")?.total == 0)
 
@@ -715,7 +750,7 @@ func runRender(output: URL, sample: URL?) async throws {
                  to: output.appendingPathComponent("4-upload.png"))
     await render(UploadSheet().environmentObject(model), size: CGSize(width: 760, height: 560),
                  to: output.appendingPathComponent("5-upload-dark.png"), dark: true)
-    await render(SettingsSheet().environmentObject(model), size: CGSize(width: 480, height: 520),
+    await render(SettingsSheet().environmentObject(model), size: CGSize(width: 480, height: 760),
                  to: output.appendingPathComponent("7-settings-dark.png"), dark: true)
     model.readsLocally = true
     await render(UploadSheet().environmentObject(model), size: CGSize(width: 760, height: 560),

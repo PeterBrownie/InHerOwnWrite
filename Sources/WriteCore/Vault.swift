@@ -615,6 +615,26 @@ public final class Vault: @unchecked Sendable {
         }
     }
 
+    /// Bytes each journal takes in the vault: its own record, and each of its pages' photo, text, and details,
+    /// plus any reading saved partway. `journalOf` says which journal a page is in.
+    public func storage(journalOf: [UUID: UUID]) throws -> [UUID: Int] {
+        try locked {
+            _ = try requireKeys()
+            var sizes: [UUID: Int] = [:]
+            func add(_ sql: String, owner: (UUID) -> UUID?) throws {
+                for (id, size) in try database.query(sql, map: { ($0.string(0), $0.int(1)) }) {
+                    if let id = UUID(uuidString: id), let journal = owner(id) { sizes[journal, default: 0] += Int(size) }
+                }
+            }
+            try add("SELECT id, length(id) + length(record) FROM journals") { $0 }
+            try add("SELECT id, length(id) + length(slot) + length(record) + length(body) + length(image) FROM pages") {
+                journalOf[$0]
+            }
+            try add("SELECT id, length(id) + length(record) FROM progress") { journalOf[$0] }
+            return sizes
+        }
+    }
+
     public func deletePage(id: UUID) throws {
         try locked {
             _ = try requireKeys()

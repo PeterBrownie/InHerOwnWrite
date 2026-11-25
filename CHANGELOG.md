@@ -6,6 +6,16 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 39 (November 24, 2026)
+
+- **Analysis counts people, not just names as written.** Once a page says who a name means, the Names list
+  counts it as that person ("Hannah K."), and a first name that could mean more than one person shows as
+  "Hannah (unsure which)". Click a person to see every place they're mentioned, under whatever name was
+  written. A first name inside a full name ("Hannah Kim") now counts once, as the full name.
+- **See how much room each journal takes.** Settings has a Storage section listing each journal's pages and
+  size on this Mac (photos, text, and everything kept with them), the whole vault file, and the model for
+  reading on this Mac if it's downloaded.
+
 ## Build 38 (November 24, 2026)
 
 - **Say who a name means.** A page's footer now shows how many people it names, like **2 people**, with an

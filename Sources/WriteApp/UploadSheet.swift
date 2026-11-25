@@ -1041,6 +1041,61 @@ public struct SettingsSheet: View {
 
     public init() {}
 
+    @ViewState private var storage: StorageReport?
+
+    private static func size(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    /// How much room each journal takes on this Mac: photos, text, and everything kept with its pages.
+    private var storageSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Storage").font(.headline)
+            if let storage {
+                if storage.journals.isEmpty {
+                    Text("No journals yet.").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                            ForEach(storage.journals) { row in
+                                GridRow {
+                                    Text(row.name)
+                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(row.pageCount == 1 ? "1 page" : "\(row.pageCount) pages")
+                                        .foregroundStyle(.secondary)
+                                        .gridColumnAlignment(.trailing)
+                                    Text(Self.size(row.bytes))
+                                        .monospacedDigit()
+                                        .gridColumnAlignment(.trailing)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 110)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(storageNote(storage))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear { storage = model.storageReport() }
+        .onChange(of: model.contentVersion) { storage = model.storageReport() }
+    }
+
+    private func storageNote(_ storage: StorageReport) -> String {
+        var note = "Each journal's photos, text, and everything kept with its pages, all encrypted on this Mac."
+        if let file = storage.vaultFile {
+            note += " The whole vault file is \(Self.size(file)), counting settings and space left by deleted pages, which is reused."
+        }
+        if let model = storage.model {
+            note += " The model for reading on this Mac takes \(Self.size(model))."
+        }
+        return note
+    }
+
     private var canChangePassword: Bool {
         password.count >= Vault.minimumPasswordLength && password == confirmation && !model.isWorking
     }
@@ -1089,6 +1144,10 @@ public struct SettingsSheet: View {
                 Toggle("Show Page Photo", isOn: $model.showPhoto)
                 Toggle("Show Two Pages", isOn: $model.twoPageSpread)
             }
+
+            Divider()
+
+            storageSection
 
             Divider()
 
