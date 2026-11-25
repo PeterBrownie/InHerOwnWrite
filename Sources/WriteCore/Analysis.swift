@@ -152,6 +152,11 @@ public struct EntryRhythm: Sendable {
     public var longestStreak: Gap?
     /// The run that ends today or yesterday; 0 when the last entry is older than that.
     public var currentStreak = 0
+    /// Entries with a time in their heading, in three-hour blocks from midnight.
+    public var byTimeOfDay: [TimelineBin] = []
+    public var timedCount = 0
+    /// The usual time of writing, "9:40 PM", averaged around the clock so 11 PM and 1 AM give midnight.
+    public var averageTime: String?
 }
 
 public struct TermResult: Sendable {
@@ -191,6 +196,7 @@ public struct AnalysisSnapshot: Sendable {
         let month: Int?
         let day: Int?
         let date: String?
+        let time: String?
         let body: String
         let keys: [String]
     }
@@ -220,7 +226,7 @@ public struct AnalysisSnapshot: Sendable {
                 let tokens = WordTokenizer.tokens(in: part.body)
                 units.append(Unit(journalID: entry.journalID, pageID: part.pageID, pageNumber: part.pageNumber,
                                   entryID: entry.id, year: entry.year, month: entry.month, day: entry.day,
-                                  date: entry.isDated ? entry.title : nil, body: part.body,
+                                  date: entry.isDated ? entry.title : nil, time: entry.time, body: part.body,
                                   keys: tokens.map(\.key)))
                 entryIDs.insert(entry.id)
                 if entry.isDated && entry.year != nil { datedIDs.insert(entry.id) }
@@ -446,6 +452,7 @@ public struct AnalysisSnapshot: Sendable {
             EntryRhythm.Gap(days: $0.end - $0.start + 1, from: Self.label(day: $0.start), to: Self.label(day: $0.end))
         }
         rhythm.currentStreak = current
+        (rhythm.byTimeOfDay, rhythm.timedCount, rhythm.averageTime) = timeOfDay(pages: pages)
         return rhythm
     }
 
@@ -565,6 +572,46 @@ public struct AnalysisSnapshot: Sendable {
               let date = calendar.date(from: DateComponents(year: year, month: month, day: day))
         else { return nil }
         return Int(date.timeIntervalSince1970 / 86_400)
+    }
+
+    /// Entries by the time in their headings, in three-hour blocks, and their average time.
+    func timeOfDay(pages: [String: Set<UUID>]) -> ([TimelineBin], Int, String?) {
+        var minutes: [String: Int] = [:]
+        for unit in units where minutes[unit.entryID] == nil {
+            let parts = unit.time?.split(separator: ":").compactMap { Int($0) } ?? []
+            if parts.count == 2 { minutes[unit.entryID] = parts[0] * 60 + parts[1] }
+        }
+        guard !minutes.isEmpty else { return ([], 0, nil) }
+        var counts = [Int](repeating: 0, count: 8)
+        var binPages = [Set<UUID>](repeating: [], count: 8)
+        var x = 0.0, y = 0.0
+        for (entry, minute) in minutes {
+            counts[minute / 180] += 1
+            binPages[minute / 180].formUnion(pages[entry] ?? [])
+            let angle = Double(minute) / 1440 * 2 * .pi
+            x += cos(angle)
+            y += sin(angle)
+        }
+        func clock(_ minute: Int) -> String {
+            let hour = minute / 60 % 24
+            let shown = hour % 12 == 0 ? 12 : hour % 12
+            return String(format: "%d:%02d %@", shown, minute % 60, hour < 12 ? "AM" : "PM")
+        }
+        let short = ["12a", "3a", "6a", "9a", "12p", "3p", "6p", "9p"]
+        let bins = (0..<8).map { index in
+            TimelineBin(id: index, label: "\(clock(index * 180)) to \(clock(index * 180 + 179))", shortLabel: short[index],
+                        count: counts[index], pageCount: binPages[index].count)
+        }
+        // Times spread evenly around the clock have no meaningful average.
+        let spread = (x * x + y * y).squareRoot() / Double(minutes.count)
+        var average: String?
+        if spread > 0.3 {
+            var angle = atan2(y, x)
+            if angle < 0 { angle += 2 * .pi }
+            let minute = Int((angle / (2 * .pi) * 1440).rounded()) % 1440
+            average = clock(minute / 5 * 5)
+        }
+        return (bins, minutes.count, average)
     }
 
     /// Today, counted like entry dates.

@@ -366,6 +366,11 @@ func runEntryChecks() {
     let timed = [page(1)]
     let timedText = "March 5, 2026\nmorning words\n\n9:30 pm\nnight words\nsaid 10:15 pm\nstill night"
     let timedEntries = EntryBuilder.build(pages: timed, journalOrder: [journal]) { _ in timedText }
+    let nightText = "March 5, 2026 11:00 pm\nlate\n\nMarch 6, 2026 1:00 am\nlater\n\nMarch 7, 2026\nno time"
+    let night = AnalysisSnapshot(entries: EntryBuilder.build(pages: timed, journalOrder: [journal]) { _ in nightText },
+                                 includedPages: [timed[0].id], names: [], journalNames: [:]).entryRhythm()
+    check("averages times around midnight", night.averageTime == "12:00 AM" && night.timedCount == 2
+          && night.byTimeOfDay.map(\.count) == [1, 0, 0, 0, 0, 0, 0, 1])
     check("a time alone starts an entry on the same day", timedEntries.count == 2
           && timedEntries[1].day == 5 && timedEntries[1].month == 3 && timedEntries[1].time == "21:30"
           && timedEntries[1].bodyText.contains("still night"))

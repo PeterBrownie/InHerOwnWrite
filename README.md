@@ -55,7 +55,9 @@ Press **+** or ⌘N and drop in a photo. With no journals yet, the sheet first a
 journal's name. Drop several photos at once (or choose several) to add them one after another, in the order
 they were taken; **Skip** leaves one out.
 
-- **One page or both.** Under **Photo shows**, choose **Both pages** for a photo of the open journal. The
+- **One page or both.** Each new photo is checked for a second page: when its writing parts at a fold near
+  the middle, **Photo shows** switches to **Both pages** by itself, and back for a single page; you can
+  still change it. Under **Photo shows**, choose **Both pages** for a photo of the open journal. The
   app finds the fold and draws a dashed line on it; drag the line to move the split. Saving makes two pages:
   the left one gets the page number, the right one the next number. A page number printed on either page
   fills it in.
@@ -94,7 +96,8 @@ page. A page that can't be read keeps its photo and can be retried.
   compare them in one chart, each in its own color. **Entries** counts the entries, charts them per
   month or per week, averages both over the whole span from the first dated entry to the last, and shows
   the longest gap between two entries, the longest and current streaks of days in a row, and which days of
-  the week have the most entries.
+  the week have the most entries. From the times written in date headings, it shows the usual time of
+  writing and a chart of entries by time of day.
 
 ## Reading on this Mac (experimental)
 

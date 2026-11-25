@@ -369,6 +369,10 @@ public struct AnalysisDetail: View {
                 if rhythm.currentStreak > 1 {
                     StatTile(label: "Current streak", value: count(rhythm.currentStreak, "day"))
                 }
+                if let average = rhythm.averageTime {
+                    StatTile(label: "Usual time", value: average,
+                             detail: "from \(count(rhythm.timedCount, "entry", "entries")) with a time")
+                }
                 Spacer()
             }
             if rhythm.datedCount == 0 {
@@ -384,6 +388,15 @@ public struct AnalysisDetail: View {
                     TimelineChart(series: [TimelineSeries(name: "entries by weekday", color: Theme.chart,
                                                           bins: rhythm.byWeekday)], noun: ("entry", "entries"))
                         .frame(height: 140)
+                }
+                if rhythm.timedCount > 0 {
+                    Text("By time of day").font(.subheadline.weight(.semibold)).padding(.top, 4)
+                    TimelineChart(series: [TimelineSeries(name: "entries by time of day", color: Theme.chart,
+                                                          bins: rhythm.byTimeOfDay)], noun: ("entry", "entries"))
+                        .frame(height: 140)
+                    Text("Only entries with a time in their heading, \(rhythm.timedCount) of \(rhythm.entryCount).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Text(rhythmNote(rhythm))
                     .font(.caption)
