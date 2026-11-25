@@ -313,7 +313,7 @@ public struct AnalysisDetail: View {
         }
     }
 
-    private static let matchLimit = 25
+    private static let matchLimit = 5
 
     /// Where the words appear, newest journal order, each opening its page.
     private var matchList: some View {
