@@ -1156,6 +1156,7 @@ if arguments.contains("--local") {
             try await runAPIChecks()
             try await runQueueChecks()
             try await runCustomStatChecks()
+            try await runStatCountingChecks()
             try await runDuplicateChecks()
             try await runLocalReadingChecks()
             runSwitchRuleChecks()

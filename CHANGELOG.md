@@ -6,6 +6,13 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 48 (November 25, 2026)
+
+- **Counting a stat with Claude no longer crashes.** The app quit as soon as the first pages came back
+  when Claude quoted words that weren't written word for word in one entry (a quote across two entries,
+  say). Those pages are now counted and listed, with the start of the entry shown. Pages counted before
+  the crash are kept, so counting picks up where it stopped.
+
 ## Build 47 (November 25, 2026)
 
 - **Make your own stats.** **New Stat…** in Analysis counts something you ask in your own words, such as

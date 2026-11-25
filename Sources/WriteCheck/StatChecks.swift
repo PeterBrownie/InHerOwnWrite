@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+import WriteApp
 import WriteCore
 
 /// Custom stats: counting words, placing Claude's quotes, the requests sent, and what the vault keeps.
@@ -43,6 +44,14 @@ func runCustomStatChecks() async throws {
           && found.matches.filter { $0.pageID == pages[0].id }.count == 1)
     check("a quote not on the page still counts on that page",
           found.matches.first { $0.pageID == pages[1].id }?.count == 2)
+
+    // A page whose only quote isn't written there word for word (a quote across two entries, say) still
+    // lists where it was found.
+    let unmatched = snapshot.result(for: reading, findings: [pages[0].id: ["cried, and the next day"]])
+    check("a page whose quote isn't on it still lists the page",
+          unmatched.term.total == 1 && unmatched.matches.count == 1 && unmatched.matches[0].highlight == nil)
+    check("a snippet with no words to find shows the start", AnalysisSnapshot.snippet(of: [], in: "Some words.").1 == nil
+          && AnalysisSnapshot.snippet(of: [], in: "").0.isEmpty)
 
     let finding = StatFinding(quotes: ["x"], text: "page text")
     check("a finding knows the text it was counted on", finding.matches("page text") && !finding.matches("page text, edited"))
@@ -152,4 +161,100 @@ func runDuplicateChecks() async throws {
     check("pages with nearly the same text are paired", pairs[ids[0]] == ids[1] && pairs[ids[1]] == ids[0])
     check("a different page isn't paired", pairs[ids[2]] == nil)
     check("short pages aren't compared", TextDuplicates.find([ids[0]: "a few words", ids[1]: "a few words"]).isEmpty)
+}
+
+/// Answers page readings with invented text, and counting requests with one quote on every counted page.
+final class StatStubAPI: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) static var countRequests = 0
+    nonisolated(unsafe) static var readings = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        var body = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open()
+            var buffer = [UInt8](repeating: 0, count: 65536)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                body.append(buffer, count: count)
+            }
+            stream.close()
+        }
+        let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+        let content = (json["messages"] as? [[String: Any]])?.first?["content"]
+        let text: String
+        if let prompt = content as? String {
+            // Counting: one instance on every page that isn't context.
+            Self.lock.withLock { Self.countRequests += 1 }
+            let keys = prompt.split(separator: "\n").compactMap { line -> String? in
+                guard line.hasPrefix("[P"), !line.hasSuffix("(context only)"), let end = line.firstIndex(of: "]") else { return nil }
+                return String(line[line.index(after: line.startIndex)..<end])
+            }
+            let pages = keys.map { ["page": $0, "instances": [["quote": "I cried"]]] as [String: Any] }
+            text = rawReply(String(data: try! JSONSerialization.data(withJSONObject: ["pages": pages]), encoding: .utf8)!)
+        } else {
+            let number = Self.lock.withLock { () -> Int in Self.readings += 1; return Self.readings }
+            let line = "On an invented day number \(number) I walked to the shop, and later I cried a little. "
+            text = reply(text: String(repeating: line, count: 18))
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) { [self] in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: [:])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(text.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+}
+
+/// Counting a stat with Claude across a whole journal, through the app, as when she confirms "Count Pages".
+@MainActor
+func runStatCountingChecks() async throws {
+    print("Counting a stat on many pages (stubbed network)")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = AppModel(directory: directory)
+    model.makeTranscriber = { key in
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StatStubAPI.self]
+        return Transcriber(apiKey: key, session: URLSession(configuration: configuration), retryDelay: 0.01)
+    }
+    await model.createVault(password: "synthetic password")
+    model.confirmRecoveryKeySaved()
+    model.showSettings = false
+    _ = await model.saveAPIKey("sk-test-canary")
+    guard let journal = model.createJournal(name: "Stat Test") else {
+        check("stat test journal is made", false)
+        return
+    }
+    let jpeg = try PagePhoto.prepare(syntheticPhoto(width: 300, height: 400))
+    let total = 250
+    for number in 1...total {
+        _ = model.addPage(journalID: journal.id, number: number, photo: jpeg, replacing: false)
+    }
+    var deadline = Date().addingTimeInterval(60)
+    while Date() < deadline, model.pages.contains(where: { $0.status == .reading || $0.status == .waiting }) {
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    check("\(total) invented pages are read", model.pages.filter { $0.status == .done }.count == total)
+
+    let stat = CustomStat(name: "Cry Count", question: "How many times did I cry?", criteria: "Each time I cried.",
+                          method: .reading, words: [])
+    model.saveStat(stat)
+    check("every read page waits to be counted", model.pagesToCount(stat).count == total)
+    StatStubAPI.countRequests = 0
+    model.countStat(stat.id)
+    deadline = Date().addingTimeInterval(60)
+    while Date() < deadline, model.statCounting[stat.id] != nil {
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    check("counting finishes without a problem", model.statCounting[stat.id] == nil)
+    check("counting is sent in batches", StatStubAPI.countRequests > 1)
+    check("every page is counted", model.pagesToCount(stat).isEmpty
+          && model.statFindings(stat).count == total)
+    model.lock()
 }

@@ -495,7 +495,8 @@ public struct AnalysisSnapshot: Sendable {
         close(flat.endIndex)
 
         var found: Range<String.Index>?
-        if words.count >= keys.count {
+        // With no words to find (a stat quote that isn't written here word for word), show the start.
+        if !keys.isEmpty, words.count >= keys.count {
             for position in 0...(words.count - keys.count)
             where zip(words[position..<(position + keys.count)], keys).allSatisfy({ $0.0.key == $0.1 }) {
                 found = words[position].range.lowerBound..<words[position + keys.count - 1].range.upperBound
