@@ -942,6 +942,7 @@ if arguments.contains("--local") {
             runEntryChecks()
             try runPhotoChecks()
             try await runAPIChecks()
+            try await runQueueChecks()
             try await runLocalReadingChecks()
             runSwitchRuleChecks()
             try runEditingChecks(in: directory)

@@ -116,8 +116,14 @@ public final class AppModel: ObservableObject {
     let directory: URL
     var vault: Vault?
     private var apiKey: String?
+    /// Pages waiting for Claude or being read now, in the order they were added.
     private var readQueue: [UUID] = []
-    private var readerTask: Task<Void, Never>?
+    /// The pages being read right now, at most `concurrentReads` of them.
+    private var readerTasks: [UUID: Task<Void, Never>] = [:]
+    /// How many pages are sent to Claude at once. More would mostly run into the API's rate limits.
+    public static let concurrentReads = 3
+    /// Makes the client that talks to Claude; the checks swap in one with a stubbed network.
+    public var makeTranscriber: (String) -> Transcriber = { Transcriber(apiKey: $0) }
     var pendingEdits: [UUID: String] = [:]
     /// The marked word last clicked in a page's text, outlined on its photo.
     @Published public var focusedWord: FocusedWord?
@@ -261,8 +267,8 @@ public final class AppModel: ObservableObject {
         // The recovery key is shown only once, so sleep must not dismiss it.
         if case .showRecoveryKey = screen { return }
         flushEdits()
-        readerTask?.cancel()
-        readerTask = nil
+        readerTasks.values.forEach { $0.cancel() }
+        readerTasks = [:]
         readQueue = []
         shutDownLocalReading()
         if let vault, pages.contains(where: { $0.status == .reading }) {
@@ -351,7 +357,7 @@ public final class AppModel: ObservableObject {
         guard let vault else { return }
         do {
             let removed = pages.filter { $0.journalID == id }.map(\.id)
-            readQueue.removeAll(where: removed.contains)
+            stopReading(removed)
             localQueue.removeAll(where: removed.contains)
             removed.forEach {
                 texts[$0] = nil
@@ -503,7 +509,7 @@ public final class AppModel: ObservableObject {
             let replaced = pages.first { $0.journalID == journalID && $0.number == number }
             let page = try vault.addPage(journalID: journalID, number: number, jpeg: jpeg, replacing: replacing)
             if let replaced {
-                readQueue.removeAll { $0 == replaced.id }
+                stopReading([replaced.id])
                 localQueue.removeAll { $0 == replaced.id }
                 texts[replaced.id] = nil
                 pendingEdits[replaced.id] = nil
@@ -603,7 +609,7 @@ public final class AppModel: ObservableObject {
     public func deletePage(id: UUID) {
         guard let vault else { return }
         do {
-            readQueue.removeAll { $0 == id }
+            stopReading([id])
             localQueue.removeAll { $0 == id }
             pendingEdits[id] = nil
             try vault.deletePage(id: id)
@@ -697,36 +703,58 @@ public final class AppModel: ObservableObject {
         readQueue.append(id)
         try? vault?.setStatus(pageID: id, status: .reading)
         try? reload()
-        if readerTask == nil {
-            readerTask = Task { [weak self] in await self?.drainQueue() }
+        startReads()
+    }
+
+    /// Starts reading the next pages in the queue until `concurrentReads` are under way.
+    private func startReads() {
+        guard vault != nil, let apiKey else { return }
+        for id in readQueue where readerTasks[id] == nil {
+            guard readerTasks.count < Self.concurrentReads else { return }
+            readerTasks[id] = Task { [weak self] in await self?.read(id, apiKey: apiKey) }
         }
     }
 
-    private func drainQueue() async {
-        while !Task.isCancelled, let id = readQueue.first, let vault, let apiKey {
-            do {
-                let jpeg = try vault.image(pageID: id)
-                let result = try await Transcriber(apiKey: apiKey).transcribe(jpeg: jpeg)
-                try Task.checkCancellation()
-                // The page may have been deleted or replaced while it was being read.
-                if readQueue.contains(id) {
-                    pendingEdits[id] = nil
-                    try vault.saveReading(pageID: id, transcription: result)
-                    texts[id] = result.text
-                }
-            } catch is CancellationError {
-                return
-            } catch VaultError.notFound {
-                // Deleted while it was being read.
-            } catch VaultError.locked {
-                return
-            } catch {
-                try? vault.setStatus(pageID: id, status: .failed, problem: error.localizedDescription)
-            }
-            readQueue.removeAll { $0 == id }
-            try? reload()
+    /// Takes pages off the queue, cancelling any that are being read, for pages deleted or replaced.
+    private func stopReading(_ ids: [UUID]) {
+        readQueue.removeAll(where: ids.contains)
+        for id in ids {
+            readerTasks.removeValue(forKey: id)?.cancel()
         }
-        readerTask = nil
+        startReads()
+    }
+
+    private func read(_ id: UUID, apiKey: String) async {
+        let outcome: Result<Transcription, Error>
+        do {
+            guard let vault else { throw VaultError.locked }
+            let jpeg = try vault.image(pageID: id)
+            outcome = .success(try await makeTranscriber(apiKey).transcribe(jpeg: jpeg))
+        } catch {
+            outcome = .failure(error)
+        }
+        // A cancelled read was already taken off the queue by whoever cancelled it (locking, deleting).
+        guard !Task.isCancelled else { return }
+        readerTasks[id] = nil
+        guard let vault else { return }
+        do {
+            let result = try outcome.get()
+            if readQueue.contains(id) {
+                pendingEdits[id] = nil
+                try vault.saveReading(pageID: id, transcription: result)
+                texts[id] = result.text
+            }
+        } catch is CancellationError {
+        } catch VaultError.notFound {
+            // Deleted while it was being read.
+        } catch VaultError.locked {
+            return
+        } catch {
+            try? vault.setStatus(pageID: id, status: .failed, problem: error.localizedDescription)
+        }
+        readQueue.removeAll { $0 == id }
+        try? reload()
+        startReads()
     }
 
     // MARK: - Settings
@@ -738,7 +766,7 @@ public final class AppModel: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         do {
-            try await Transcriber(apiKey: trimmed).verifyKey()
+            try await makeTranscriber(trimmed).verifyKey()
         } catch TranscriberError.invalidKey {
             errorMessage = TranscriberError.invalidKey.errorDescription
             return false
