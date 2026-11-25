@@ -512,9 +512,10 @@ struct TranscriptWord: View {
     }
 }
 
-/// Lays words out left to right, wrapping onto new rows like text.
+/// Lays words (or any small views) out left to right, wrapping onto new rows like text.
 struct WordFlow: Layout {
     var spacing: CGFloat = 4
+    var rowSpacing: CGFloat = 2
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
@@ -522,7 +523,7 @@ struct WordFlow: Layout {
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
             if x > 0 && x + size.width > width {
-                y += rowHeight + 2
+                y += rowHeight + rowSpacing
                 x = 0
                 rowHeight = 0
             }
@@ -538,7 +539,7 @@ struct WordFlow: Layout {
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
             if x > bounds.minX && x + size.width > bounds.maxX {
-                y += rowHeight + 2
+                y += rowHeight + rowSpacing
                 x = bounds.minX
                 rowHeight = 0
             }

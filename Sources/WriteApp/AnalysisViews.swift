@@ -354,7 +354,8 @@ public struct AnalysisDetail: View {
                     .fixedSize()
                 }
             }
-            HStack(alignment: .top, spacing: 28) {
+            // Tiles wrap onto a second row rather than squeezing a value like "10:00 PM" onto two lines.
+            WordFlow(spacing: 28, rowSpacing: 14) {
                 StatTile(label: "Entries", value: rhythm.entryCount)
                 if let perMonth = rhythm.perMonth, let perWeek = rhythm.perWeek {
                     StatTile(label: "Average per month", value: perMonth.formatted(.number.precision(.fractionLength(1))))
@@ -373,8 +374,8 @@ public struct AnalysisDetail: View {
                     StatTile(label: "Usual time", value: average,
                              detail: "from \(count(rhythm.timedCount, "entry", "entries")) with a time")
                 }
-                Spacer()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if rhythm.datedCount == 0 {
                 Text("None of these entries has a date yet, so they can't be shown over time.")
                     .foregroundStyle(.secondary)
@@ -499,6 +500,8 @@ private struct StatTile: View {
             }
             Text(value)
                 .font(.system(size: 26, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
             if let detail {
                 Text(detail)
                     .font(.caption)
