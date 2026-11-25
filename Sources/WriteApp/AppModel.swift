@@ -230,6 +230,7 @@ public final class AppModel: ObservableObject {
         analysisExcludedJournals = []
         analysisRanges = [:]
         searchText = ""
+        analysisTerm = ""
         showUpload = false
         showSettings = false
         errorMessage = nil
