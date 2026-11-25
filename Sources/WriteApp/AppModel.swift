@@ -51,7 +51,11 @@ public final class AppModel: ObservableObject {
     @Published public var selectedEntryID: String?
     @Published public private(set) var libraryMode: LibraryMode = .pages
     @Published public var showingAnalysis = false
-    @Published public var searchText = ""
+    @Published public var searchText = "" {
+        didSet { openedFrom = nil }
+    }
+    /// The words a page was opened to show from Analysis, highlighted in its text until the next search.
+    @Published public private(set) var openedFrom: String?
     /// The words looked up in Analysis, separated by commas; kept while a match's page is open.
     @Published public var analysisTerm = ""
     @Published public var isWorking = false
@@ -436,8 +440,16 @@ public final class AppModel: ObservableObject {
         libraryMode = mode
     }
 
-    public func openPage(_ id: UUID) {
+    /// What to highlight in the page or entry being read: the search, or the words it was opened from.
+    public var findText: String {
+        let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return search.isEmpty ? (openedFrom ?? "") : search
+    }
+
+    /// Opens a page, highlighting `highlight` in its text, as when a place in Analysis is clicked.
+    public func openPage(_ id: UUID, highlight: String? = nil) {
         guard let page = page(id: id) else { return }
+        openedFrom = highlight
         flushEdits()
         showingAnalysis = false
         selectedJournalID = page.journalID
@@ -611,6 +623,43 @@ public final class AppModel: ObservableObject {
     /// Says who a name written on a page means ("Hannah" → "Hannah K."); nil or the name as written forgets it.
     public func setPerson(pageID: UUID, written: String, person: String?) {
         attempt { try $0.setPerson(pageID: pageID, written: written, person: person) }
+    }
+
+    /// The pages where a person from the Names list is meant, and the name written there for them. `label` is
+    /// as the list shows it: "Hannah", "Hannah K.", or "Hannah (unsure which)".
+    public func pagesNaming(_ label: String) -> [(page: PageInfo, written: String)] {
+        let target = PeopleDirectory.key(label)
+        var seen = Set<String>()
+        let known = pages.flatMap { $0.structure?.names ?? [] }.filter { seen.insert(PeopleDirectory.key($0)).inserted }
+        var found: [(page: PageInfo, written: String)] = []
+        for page in pages where page.structure != nil {
+            let keys = WordTokenizer.tokens(in: texts[page.id] ?? "").map(\.key)
+            let listed = Set((page.structure?.names ?? []).map(PeopleDirectory.key))
+            for written in known {
+                let nameKeys = WordTokenizer.tokens(in: written).map(\.key)
+                guard listed.contains(PeopleDirectory.key(written))
+                        || AnalysisSnapshot.occurrences(of: nameKeys, in: keys) > 0 else { continue }
+                if PeopleDirectory.key(people.resolve(written, onPage: page.id).label) == target {
+                    found.append((page, written))
+                }
+            }
+        }
+        return found
+    }
+
+    /// Says on every page where `label` is meant that the name means `newName` instead, such as adding a last
+    /// name. The text stays as written. Returns how many pages changed.
+    @discardableResult
+    public func renamePerson(_ label: String, to newName: String) -> Int {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return 0 }
+        let places = pagesNaming(label)
+        attempt { vault in
+            for place in places {
+                try vault.setPerson(pageID: place.page.id, written: place.written, person: name)
+            }
+        }
+        return Set(places.map(\.page.id)).count
     }
 
     /// How much room each journal takes on this Mac, with the whole vault file and the reading model, for

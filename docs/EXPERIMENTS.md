@@ -278,7 +278,7 @@ Not started. Listed so they aren't forgotten.
 
 ## Known issues
 
-- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, the Storage list in Settings, removing
+- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, renaming a name on every page, the Storage list in Settings, removing
   and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink
   tint, adding both pages from one photo, and dropping several photos at once. They pass
   `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked

@@ -14,6 +14,8 @@ struct JournalTextEditor: NSViewRepresentable {
     var onResolve: (WordNote, String?) -> Void = { _, _ in }
     /// Called with the marked word just clicked, to show it on the photo, or nil when a click lands elsewhere.
     var onFocus: (WordNote?) -> Void = { _ in }
+    /// Words being searched for, highlighted wherever they appear; the first is scrolled into view.
+    var find = ""
 
     static let attributes: [NSAttributedString.Key: Any] = {
         let base = NSFont.systemFont(ofSize: 15)
@@ -64,7 +66,9 @@ struct JournalTextEditor: NSViewRepresentable {
         context.coordinator.notes = notes
         context.coordinator.onResolve = onResolve
         context.coordinator.onFocus = onFocus
+        context.coordinator.find = find
         context.coordinator.mark(textView)
+        context.coordinator.revealFound(in: textView)
         return scrollView
     }
 
@@ -86,7 +90,10 @@ struct JournalTextEditor: NSViewRepresentable {
             needsMarking = true
         }
         context.coordinator.notes = notes
-        if needsMarking { context.coordinator.mark(textView) }
+        let findChanged = context.coordinator.find != find
+        context.coordinator.find = find
+        if needsMarking || findChanged { context.coordinator.mark(textView) }
+        if findChanged { context.coordinator.revealFound(in: textView) }
         textView.isEditable = isEditable
         textView.alphaValue = isEditable ? 1 : 0.6
     }
@@ -96,6 +103,7 @@ struct JournalTextEditor: NSViewRepresentable {
         var notes: [(note: WordNote, range: NSRange)] = []
         var onResolve: (WordNote, String?) -> Void = { _, _ in }
         var onFocus: (WordNote?) -> Void = { _ in }
+        var find = ""
 
         init(text: Binding<String>) {
             self.text = text
@@ -113,6 +121,9 @@ struct JournalTextEditor: NSViewRepresentable {
             storage.beginEditing()
             for key in [NSAttributedString.Key.backgroundColor, .underlineStyle, .underlineColor, .toolTip] {
                 storage.removeAttribute(key, range: whole)
+            }
+            for range in TextSearch.ranges(of: find, in: storage.string) where NSMaxRange(range) <= storage.length {
+                storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.45), range: range)
             }
             for (note, range) in notes where NSMaxRange(range) <= storage.length {
                 let percent = Int((note.confidence * 100).rounded())
@@ -132,6 +143,12 @@ struct JournalTextEditor: NSViewRepresentable {
                 }
             }
             storage.endEditing()
+        }
+
+        /// Scrolls the first match into view, once the text has been laid out.
+        func revealFound(in textView: NSTextView) {
+            guard let first = TextSearch.ranges(of: find, in: textView.string).first else { return }
+            DispatchQueue.main.async { textView.scrollRangeToVisible(first) }
         }
 
         func note(at index: Int) -> (note: WordNote, range: NSRange)? {

@@ -59,6 +59,50 @@ public enum TextSearch {
         return normalized(text).range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
     }
 
+    /// Where the query appears in the text, matched the way `contains` matches, as ranges of the text itself
+    /// (UTF-16, for `NSString` and text views).
+    public static func ranges(of query: String, in text: String) -> [NSRange] {
+        let needle = fold(normalized(query))
+        guard !needle.isEmpty else { return [] }
+        // The text folded the same way, with each folded unit pointing back to the character it came from.
+        var folded = ""
+        var origins: [NSRange] = []
+        var lastWasSpace = false
+        var offset = 0
+        for character in text {
+            let length = String(character).utf16.count
+            let source = NSRange(location: offset, length: length)
+            offset += length
+            if character.isWhitespace || character.isNewline {
+                if !lastWasSpace {
+                    folded += " "
+                    origins.append(source)
+                }
+                lastWasSpace = true
+                continue
+            }
+            lastWasSpace = false
+            let piece = fold(character == "’" ? "'" : String(character))
+            folded += piece
+            origins.append(contentsOf: Array(repeating: source, count: piece.utf16.count))
+        }
+        let haystack = folded as NSString
+        var found: [NSRange] = []
+        var start = 0
+        while start < haystack.length {
+            let hit = haystack.range(of: needle, options: .literal, range: NSRange(location: start, length: haystack.length - start))
+            guard hit.location != NSNotFound, hit.length > 0 else { break }
+            let first = origins[hit.location], last = origins[NSMaxRange(hit) - 1]
+            found.append(NSRange(location: first.location, length: NSMaxRange(last) - first.location))
+            start = NSMaxRange(hit)
+        }
+        return found
+    }
+
+    private static func fold(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+
     static func normalized(_ text: String) -> String {
         text.replacingOccurrences(of: "’", with: "'")
             .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
@@ -218,6 +262,12 @@ public struct TermMatch: Identifiable, Hashable, Sendable {
     public let snippet: String
     /// Where the first mention sits in `snippet`, for highlighting.
     public let highlight: Range<Int>?
+
+    /// The mention as written, such as "Hannah" for a lookup of "Hannah K.".
+    public var highlightedText: String? {
+        guard let highlight, highlight.upperBound <= snippet.count else { return nil }
+        return String(Array(snippet)[highlight])
+    }
 }
 
 /// A prepared copy of the chosen pages, safe to compute away from the main thread.
@@ -588,7 +638,7 @@ public struct AnalysisSnapshot: Sendable {
         return withYear ? "\(short), \(date.year)" : short
     }
 
-    static func occurrences(of phrase: [String], in keys: [String]) -> Int {
+    public static func occurrences(of phrase: [String], in keys: [String]) -> Int {
         guard !phrase.isEmpty, keys.count >= phrase.count else { return 0 }
         if phrase.count == 1 { return keys.reduce(0) { $0 + ($1 == phrase[0] ? 1 : 0) } }
         var count = 0

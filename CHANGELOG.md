@@ -6,6 +6,15 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 41 (November 24, 2026)
+
+- **Searched words are highlighted where you read them.** After searching your journals, the words are
+  highlighted in yellow in the entry or page you open, and the first one is scrolled into view. Opening a
+  place from Analysis's **Where it appears** highlights the word there too.
+- **Rename a name everywhere.** In Analysis, each name in the **Names** list has **Rename…**, which gives it
+  a fuller name, like a last name, on every page where it's written. The text stays as written.
+- In two-page view, the pages now always split exactly in half; the middle no longer moves around.
+
 ## Build 40 (November 24, 2026)
 
 - **Analysis search no longer lags while typing.** It waits until you pause for a second before looking the

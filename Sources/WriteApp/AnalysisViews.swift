@@ -100,6 +100,8 @@ public struct AnalysisDetail: View {
     @ViewState private var byWeek = false
     /// The stat whose history is shown under the Entries tiles, if one was clicked.
     @ViewState private var trend: StatTrend?
+    /// The name being renamed on every page, if Rename was clicked.
+    @ViewState private var renaming: WordStat?
 
     private static let wordLimit = 40
 
@@ -196,6 +198,16 @@ public struct AnalysisDetail: View {
         }
         .onChange(of: model.analysisTerm) { _, value in
             lookUp(value)
+        }
+        .sheet(item: $renaming) { name in
+            RenamePersonSheet(label: name.display) { newName in
+                // A lookup of the old name follows it to the new one.
+                let parts = AnalysisSnapshot.splitTerms(term)
+                if parts.contains(where: { PeopleDirectory.key($0) == name.key }) {
+                    term = parts.map { PeopleDirectory.key($0) == name.key ? newName : $0 }.joined(separator: ", ")
+                }
+            }
+            .environmentObject(model)
         }
         .confirmationDialog(
             "Read \(model.pagesMissingNames.count) older pages again?",
@@ -362,7 +374,7 @@ public struct AnalysisDetail: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("Where it appears").font(.headline).padding(.top, 6)
             ForEach(shown, id: \.match.id) { item in
-                Button { model.openPage(item.match.pageID) } label: {
+                Button { model.openPage(item.match.pageID, highlight: item.match.highlightedText) } label: {
                     MatchRow(match: item.match, color: matches.count > 1 ? Theme.series(item.series) : nil)
                 }
                 .buttonStyle(.plain)
@@ -568,7 +580,7 @@ public struct AnalysisDetail: View {
                 Text("No names yet.").foregroundStyle(.secondary)
             }
             WordRows(words: Array(names.prefix(Self.wordLimit)), maximum: names.first?.count ?? 1,
-                     chosen: chosenColors) { select($0) }
+                     chosen: chosenColors, onRename: { renaming = $0 }) { select($0) }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -872,6 +884,8 @@ private struct WordRows: View {
     let maximum: Int
     /// Words being looked up, marked in their chart colors.
     var chosen: [String: Color] = [:]
+    /// For names: renaming one on every page where it's written.
+    var onRename: ((WordStat) -> Void)? = nil
     let onSelect: (String) -> Void
 
     var body: some View {
@@ -904,6 +918,11 @@ private struct WordRows: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .trailing)
+                    if let onRename {
+                        Button("Rename…") { onRename(word) }
+                            .controlSize(.mini)
+                            .help("Give \(word.display) a fuller name, such as a last name, on every page where it's written")
+                    }
                     Button("Hide") { model.hideWord(word.key) }
                         .controlSize(.mini)
                         .help("Hide \(word.display) from these lists")
@@ -1096,5 +1115,53 @@ private struct TimelineChart: View {
         let step = max(Int(([1, 2, 5, 10].first { Double($0) * magnitude >= rough } ?? 10) * magnitude), 1)
         let top = Int((Double(value) / Double(step)).rounded(.up)) * step
         return Array(stride(from: 0, through: top, by: step))
+    }
+}
+
+/// Renames a person on every page where their name is written: "Hannah" becomes "Hannah K." in Analysis and
+/// in each page's people. The text itself stays as written.
+private struct RenamePersonSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let label: String
+    let onRenamed: (String) -> Void
+    @ViewState private var name: String?
+
+    var body: some View {
+        let places = model.pagesNaming(label)
+        let pageCount = Set(places.map(\.page.id)).count
+        let written = places.first?.written ?? label
+        let typed = name ?? written
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Rename \(label)").font(.title3.weight(.semibold))
+            Text(pageCount == 0
+                 ? "\(label) isn't on any page that has been read."
+                 : "Give the name to use on \(pageCount == 1 ? "the 1 page" : "all \(pageCount) pages") where this name is written, such as \(written) with a last name or initial. The text stays as written.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField(written, text: Binding(get: { typed }, set: { name = $0 }))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(rename)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename", action: rename)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmed.isEmpty || trimmed == label || pageCount == 0)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
+    }
+
+    private func rename() {
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != label else { return }
+        model.renamePerson(label, to: trimmed)
+        onRenamed(trimmed)
+        dismiss()
     }
 }

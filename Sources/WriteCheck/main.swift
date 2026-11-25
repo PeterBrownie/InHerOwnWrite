@@ -386,6 +386,11 @@ func runEntryChecks() {
     check("searches for a phrase across a line break", TextSearch.contains("we went\nhome early", "Went  home")
           && TextSearch.contains("Theo’s cafe", "theo's café") && !TextSearch.contains("went out", "went home")
           && !TextSearch.contains("anything", "  "))
+    let foundText = "We went\nhome. José’s café, then home again."
+    check("finds where a search appears, across lines, accents, and apostrophes",
+          TextSearch.ranges(of: "went  home", in: foundText).map { (foundText as NSString).substring(with: $0) } == ["went\nhome"]
+          && TextSearch.ranges(of: "jose's cafe", in: foundText).map { (foundText as NSString).substring(with: $0) } == ["José’s café"]
+          && TextSearch.ranges(of: "HOME", in: foundText).count == 2 && TextSearch.ranges(of: " ", in: foundText).isEmpty)
     check("looks up a phrase across lines and punctuation", snapshot.matches("body, b").count == 2)
     check("compares several words", snapshot.terms("body, Body B, ").map(\.total) == [4, 2])
     check("names only count when present", snapshot.nameStats(hidden: []).map(\.key) == ["body"])
@@ -717,6 +722,9 @@ func runRender(output: URL, sample: URL?) async throws {
     model.setLibraryMode(.entries)
     model.selectedEntryID = model.entries.first { $0.parts.count > 1 }?.id
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("3d-entries.png"))
+    model.searchText = "the bread"
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("3d-entries-search.png"))
+    model.searchText = ""
     model.showingAnalysis = true
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("8-analysis.png"))
     await render(AnalysisDetail(showingTrend: .perMonth).environmentObject(model), size: CGSize(width: 900, height: 900),

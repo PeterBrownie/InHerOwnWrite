@@ -94,9 +94,17 @@ struct PageReader: View {
             }
             Divider()
             if pages.count == 2 {
-                HSplitView {
-                    PageColumn(page: pages[0], isCompact: true).id(pages[0].id).frame(minWidth: 240)
-                    PageColumn(page: pages[1], isCompact: true).id(pages[1].id).frame(minWidth: 240)
+                // Two equal halves, like an open book. A draggable split moved its middle whenever either
+                // page's text changed size.
+                GeometryReader { proxy in
+                    let half = max((proxy.size.width - 1) / 2, 0)
+                    HStack(spacing: 0) {
+                        PageColumn(page: pages[0], isCompact: true).id(pages[0].id)
+                            .frame(width: half)
+                        Divider()
+                        PageColumn(page: pages[1], isCompact: true).id(pages[1].id)
+                            .frame(width: half)
+                    }
                 }
             } else if let page = pages.first {
                 PageColumn(page: page, isCompact: model.twoPageSpread).id(page.id)
@@ -366,7 +374,8 @@ private struct PageColumn: View {
                 isEditable: page.status != .reading,
                 notes: model.showConfidence ? model.wordNotes(pageID: page.id) : [],
                 onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) },
-                onFocus: { note in model.focusWord(note, pageID: page.id) }
+                onFocus: { note in model.focusWord(note, pageID: page.id) },
+                find: model.findText
             )
             .padding(4)
             .background(Theme.card)
@@ -380,7 +389,8 @@ private struct PageColumn: View {
                 isEditable: page.status != .reading,
                 notes: model.showConfidence ? model.reflowedWordNotes(pageID: page.id) : [],
                 onResolve: { note, replacement in model.resolve(note, pageID: page.id, replacement: replacement) },
-                onFocus: { note in model.focusWord(note, pageID: page.id) }
+                onFocus: { note in model.focusWord(note, pageID: page.id) },
+                find: model.findText
             )
             .padding(4)
             .background(Theme.card)
@@ -436,7 +446,20 @@ struct EntryReader: View {
         .background(Theme.card.ignoresSafeArea())
     }
 
+    /// The part's text with what's being searched for highlighted.
+    private func highlighted(_ text: String) -> AttributedString {
+        var styled = AttributedString(text)
+        for range in TextSearch.ranges(of: model.findText, in: text) {
+            guard let found = Range(range, in: text),
+                  let lower = AttributedString.Index(found.lowerBound, within: styled),
+                  let upper = AttributedString.Index(found.upperBound, within: styled) else { continue }
+            styled[lower..<upper].backgroundColor = Color.yellow.opacity(0.45)
+        }
+        return styled
+    }
+
     private var entryText: some View {
+        ScrollViewReader { scroller in
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -465,19 +488,30 @@ struct EntryReader: View {
                             Rectangle().fill(Theme.line).frame(height: 1)
                         }
                     }
-                    Text(model.accurateLineBreaks ? part.body : LineFlow.reflow(part.body))
+                    Text(highlighted(model.accurateLineBreaks ? part.body : LineFlow.reflow(part.body)))
                         .font(.system(size: 15, design: .serif))
                         .lineSpacing(5)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Edit on Page \(part.pageNumber)") { model.openPage(part.pageID) }
-                        .buttonStyle(.link)
-                        .font(.caption)
+                        .id(part.id)
+                    Button("Edit on Page \(part.pageNumber)") {
+                        model.openPage(part.pageID, highlight: model.findText.isEmpty ? nil : model.findText)
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
                 }
             }
             .padding(20)
         }
         .background(Theme.card)
+        .task(id: "\(entry.id)|\(model.findText)") {
+            // Bring the first part that mentions the search into view.
+            let find = model.findText
+            guard !find.isEmpty, entry.parts.count > 1,
+                  let part = entry.parts.first(where: { TextSearch.contains($0.body, find) }) else { return }
+            scroller.scrollTo(part.id, anchor: .top)
+        }
+        }
     }
 }
 
