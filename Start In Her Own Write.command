@@ -23,6 +23,12 @@ binary="$(swift build -c release --product InHerOwnWrite --show-bin-path)/InHerO
 rm -rf "$staged"
 mkdir -p "$staged/Contents/MacOS" "$staged/Contents/Resources"
 cp "$binary" "$staged/Contents/MacOS/InHerOwnWrite"
+# With only the Command Line Tools, SwiftPM's link records the deployment target (15.0) as the SDK the app was
+# built with, so macOS shows it with the old look instead of Liquid Glass. Record the SDK it really used.
+if sdk="$(xcrun --show-sdk-version 2>/dev/null)" && [[ "$sdk" =~ '^[0-9]+(\.[0-9]+)*$' ]]; then
+  vtool -set-build-version macos 15.0 "$sdk" -replace -output "$staged/Contents/MacOS/InHerOwnWrite" \
+    "$staged/Contents/MacOS/InHerOwnWrite" 2>/dev/null
+fi
 cp Resources/AppIcon.icns "$staged/Contents/Resources/AppIcon.icns"
 cat > "$staged/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
