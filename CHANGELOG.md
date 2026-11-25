@@ -6,6 +6,14 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 33 (November 24, 2026)
+
+- **Liquid Glass on Macs that build the app themselves.** Copies built from the code recorded the wrong
+  macOS version, so they showed the older look. Copies downloaded from GitHub already had Liquid Glass.
+- In Analysis, the dates under **Longest streak** and **Longest gap** show on two lines instead of being
+  cut off.
+- Groundwork for telling apart two people with the same first name (nothing to see yet).
+
 ## Build 30 (November 24, 2026)
 
 - **Unlock with Touch ID or Apple Watch.** Turn it on in Settings. The journal then opens with a touch, or

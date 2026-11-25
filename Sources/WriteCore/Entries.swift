@@ -28,6 +28,8 @@ public struct PageStructure: Codable, Hashable, Sendable {
     public var textDigest: String
     /// Words a reading on this Mac changed or wasn't sure of. Missing on other readings.
     public var wordNotes: [WordNote]?
+    /// Who a name on this page means, when she said ("Hannah" → "Hannah K."), by `PeopleDirectory.key`.
+    public var people: [String: String]?
 
     public init(markers: [EntryMarker], names: [String], text: String, wordNotes: [WordNote]? = nil) {
         self.markers = markers

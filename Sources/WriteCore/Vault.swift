@@ -506,7 +506,9 @@ public final class Vault: @unchecked Sendable {
             page.status = .done
             page.problem = nil
             page.wasCutOff = transcription.wasCutOff
+            let people = page.structure?.people
             page.structure = transcription.structure
+            if page.structure != nil { page.structure?.people = people }
             page.updatedAt = Date()
             let id = Self.key(pageID)
             let body = try Crypto.seal(Data(transcription.text.utf8), key: keys.records, context: "page/\(id)/body")
@@ -562,6 +564,25 @@ public final class Vault: @unchecked Sendable {
             var page = try page(id: pageID)
             guard page.structure != nil else { return }
             page.structure?.wordNotes = notes.isEmpty ? nil : notes
+            try database.run("UPDATE pages SET record = ? WHERE id = ?",
+                             [.blob(try sealRecord(page)), .text(Self.key(pageID))])
+        }
+    }
+
+    /// Says who a name written on this page means, or with nil (or the name as written), forgets it.
+    public func setPerson(pageID: UUID, written: String, person: String?) throws {
+        try locked {
+            var page = try page(id: pageID)
+            guard page.structure != nil else { return }
+            let key = PeopleDirectory.key(written)
+            let person = person?.trimmingCharacters(in: .whitespacesAndNewlines)
+            var people = page.structure?.people ?? [:]
+            if let person, !person.isEmpty, PeopleDirectory.key(person) != key {
+                people[key] = person
+            } else {
+                people[key] = nil
+            }
+            page.structure?.people = people.isEmpty ? nil : people
             try database.run("UPDATE pages SET record = ? WHERE id = ?",
                              [.blob(try sealRecord(page)), .text(Self.key(pageID))])
         }

@@ -383,6 +383,23 @@ func runEntryChecks() {
     check("looks up a phrase across lines and punctuation", snapshot.matches("body, b").count == 2)
     check("compares several words", snapshot.terms("body, Body B, ").map(\.total) == [4, 2])
     check("names only count when present", snapshot.nameStats(hidden: []).map(\.key) == ["body"])
+
+    // Two people with one first name: a page that only says "Wren" is unsure until she says which.
+    func namedPage(_ names: [String], people: [String: String]? = nil) -> PageInfo {
+        var structure = PageStructure(markers: [], names: names, text: "")
+        structure.people = people
+        return PageInfo(id: UUID(), journalID: UUID(), number: 1, status: .done, problem: nil, wasCutOff: false,
+                        createdAt: Date(), updatedAt: Date(), structure: structure)
+    }
+    let plainWren = namedPage(["Wren"])
+    let oneWren = PeopleDirectory(pages: [plainWren, namedPage(["Wren"], people: ["wren": "Wren K."])])
+    check("one known Wren leaves the others alone", oneWren.resolve("Wren", onPage: plainWren.id) == .person("Wren"))
+    let twoWrens = PeopleDirectory(pages: [plainWren, namedPage(["Wren"], people: ["wren": "Wren K."]),
+                                           namedPage(["Wren Ames", "Wren's"])])
+    check("two Wrens make a bare Wren unsure",
+          twoWrens.resolve("Wren", onPage: plainWren.id) == .unsure(written: "Wren", choices: ["Wren Ames", "Wren K."])
+          && twoWrens.people(on: plainWren).count == 1)
+    check("a full name is its own person", twoWrens.resolve("Wren Ames", onPage: plainWren.id) == .person("Wren Ames"))
     let onlyPage4 = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:])
     check("limits analysis to chosen pages", onlyPage4.pageCount == 1 && onlyPage4.term("body")?.total == 0)
 

@@ -267,6 +267,22 @@ Not started. Listed so they aren't forgotten.
 - **Scroll the photo to an outlined word.** When the photo pane is zoomed in, clicking a marked word outlines
   it but doesn't scroll it into view.
 
+- **People on a page, and telling apart two people with one first name** (asked for November 24, 2026;
+  partly built). Built: `PeopleDirectory` (`Sources/WriteCore/People.swift`) works out who each name on a
+  page means; `PageStructure.people` stores her choice for a page ("Hannah" → "Hannah K."), kept when the
+  page is read again; `Vault.setPerson` saves it. A bare first name is "unsure which" once two or more
+  people with that first name are known (from her choices or names written in full). Still to do:
+  - a button in the page footer (`PageColumn.pageFooter` in `ReaderViews.swift`) reading "2 people" (the
+    count of names on the page), with an exclamation mark when one is unsure, opening a list where each
+    name can be given a last name or initial, or matched to one of the people it could be;
+  - Analysis counting each person through those choices (`AnalysisSnapshot.nameStats`), with unsure
+    mentions shown as "Hannah (unsure which)", and clicking a person like "Hannah K." finding the pages
+    chosen for them, since that label isn't in the text.
+- **Lowercase ordinary words in the word counts** (asked for November 24, 2026). The word list shows each
+  word's most common spelling, so a word that often starts a sentence shows capitalized. Show ordinary
+  words in lowercase, and keep capitals only for names (the names found on pages, and people's names) and
+  titles. One way to spot titles: words written with a capital mostly in the middle of a sentence.
+
 ## Known issues
 
 - **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame, removing
