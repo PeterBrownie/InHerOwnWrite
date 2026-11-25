@@ -6,6 +6,19 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 52 (November 25, 2026)
+
+- **Back to Analysis.** A page or entries opened from Analysis have **‹ Analysis** at the top left, which
+  goes back exactly where you were: scrolled to the same place, with the same stat and choices.
+- **Rolling averages.** The trend under Average per month, Average per week, and Usual time can show a
+  rolling average over the last 3, 6, or 12 months (or 4, 8, or 12 weeks), or the average since the start.
+  The average tiles show the latest rolling figure.
+- **Click to list entries.** A day of the week or a time of day in the Entries charts, and the Longest gap
+  and streak tiles, list just those entries. Clicking a bar on a stat's chart narrows its list to that
+  period.
+- **Hide Entry Text.** The eye button in the toolbar (⇧⌘H) hides what you wrote everywhere it's shown, so
+  you can show someone Analysis. Counts, charts, top words, and names stay readable. No password needed.
+
 ## Build 51 (November 25, 2026)
 
 - **Leave an entry out of a stat.** Each place a stat was found has a **⋯** menu with **Exclude** and

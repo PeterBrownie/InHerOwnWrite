@@ -75,7 +75,14 @@ public final class AppModel: ObservableObject {
     private var starredIDs: Set<String> = []
     /// Words in each entry, by entry id; counted when entries are rebuilt.
     private var entryWordCounts: [String: Int] = [:]
-    @Published public var showingAnalysis = false
+    @Published public var showingAnalysis = false {
+        didSet { if showingAnalysis { canReturnToAnalysis = false } }
+    }
+    /// Set when a page or entries were opened from Analysis. Analysis stays as it was, scrolled where it was,
+    /// until she goes back to it.
+    @Published public private(set) var canReturnToAnalysis = false
+    /// Blurs what she wrote everywhere it's shown, so Analysis can be shown to someone. Not a lock.
+    @Published public var hidesEntryText = false
     @Published public var searchText = "" {
         didSet { openedFrom = nil }
     }
@@ -357,6 +364,7 @@ public final class AppModel: ObservableObject {
         analysisExcludedJournals = []
         analysisRanges = [:]
         analysisDateRange = nil
+        canReturnToAnalysis = false
         searchText = ""
         analysisTerm = ""
         showUpload = false
@@ -473,6 +481,12 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// Goes back to Analysis exactly as she left it.
+    public func returnToAnalysis() {
+        flushEdits()
+        showingAnalysis = true
+    }
+
     public func selectJournal(_ id: UUID) {
         showingAnalysis = false
         entryFilter = nil
@@ -523,6 +537,7 @@ public final class AppModel: ObservableObject {
         showsStarredOnly = false
         entryFilter = EntryFilter(label: label, entryIDs: Set(ids))
         libraryMode = .entries
+        if showingAnalysis { canReturnToAnalysis = true }
         showingAnalysis = false
         selectedEntryID = visibleEntries.first?.id
         if let entry = selectedEntry { selectedJournalID = entry.journalID }
@@ -630,6 +645,7 @@ public final class AppModel: ObservableObject {
         guard let page = page(id: id) else { return }
         openedFrom = highlight
         flushEdits()
+        if showingAnalysis { canReturnToAnalysis = true }
         showingAnalysis = false
         selectedJournalID = page.journalID
         selectedPageID = id

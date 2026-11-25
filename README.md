@@ -98,6 +98,9 @@ page. A page that can't be read keeps its photo and can be retried.
   so after a skipped page (one torn out, say) the next page starts "Continued from an earlier page". Its
   **⋯** button has **Merge with Previous Entry**, which joins it to the entry before; the merged entry's
   **⋯** has **Split at Page N** to undo it.
+- **Hide Entry Text.** The eye button in the toolbar (⇧⌘H) blurs what you wrote everywhere it's shown, and
+  covers page text and photos, so you can show someone Analysis: counts, charts, top words, and names stay
+  readable. It needs no password; it's for showing your screen, not a lock.
 - **Color.** Settings has five colors for buttons, links, and charts: Clay (the original), Green, Blue,
   Plum, and Slate.
 - **Reading controls.** Show or hide the photo, show one page or two, and flip with ⌘[ and ⌘]. Accurate
@@ -108,13 +111,18 @@ page. A page that can't be read keeps its photo and can be retried.
   found, and how often any word or name appears over time. Click a word, or type a word, name, or phrase, to look it up (a phrase is found even where the handwriting
   wraps between its words): below the chart,
   **Where it appears** lists each place with its date, page, journal (when there's more than one), and two
-  lines around it; click one to open the page. ⌘-click more words, or type them separated by commas, to
+  lines around it; click one to open the page. A page or entries opened from Analysis have **‹ Analysis** at
+  the top left, which goes back to Analysis exactly as you left it, scrolled to the same place. ⌘-click more words, or type them separated by commas, to
   compare them in one chart, each in its own color. **Entries** counts the entries, charts them per
   month or per week, averages both over the whole span from the first dated entry to the last, and shows
   the longest gap between two entries, the longest and current streaks of days in a row, and which days of
   the week have the most entries. From the times written in date headings, it shows the usual time of
-  writing and a chart of entries by time of day. Click a month or week in the entries chart to list just
-  its entries; clear the label above the list, or pick a journal, to see them all again. Words in **Top
+  writing and a chart of entries by time of day. Click the average per month or week, or the usual time, to
+  see how it changed: **Rolling** averages over the last 3, 6, or 12 months (or 4, 8, or 12 weeks) at each
+  point, **Since the Start** over everything up to then; the average tiles also show the latest rolling
+  figure. Click a month or week in the entries chart, a day of the week, a time of day, or the longest gap
+  or streak, to list just those entries; clear the label above the list, or pick a journal, to see them
+  all again. On a stat's chart, click a bar to narrow **Where it was found** to it. Words in **Top
   words** are numbered by rank. A plain click on a word or name goes back to the top of the page to show it.
 - **Your stats.** **New Stat…** in Analysis counts something you describe in your own words, such as "How
   many times did I cry?". Claude suggests a name ("Cry Count"), what counts as one, and the words that show

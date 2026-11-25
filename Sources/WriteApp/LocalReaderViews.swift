@@ -14,7 +14,8 @@ public struct LocalReaderWindow: View {
             if model.screen != .library {
                 placeholder(icon: "lock", title: "Locked", detail: "Unlock the journal to read pages on this Mac.")
             } else if let session = model.localSession {
-                LocalSessionView(session: session)
+                // The page being read, its crops, and its words are all her writing.
+                LocalSessionView(session: session).entryCover()
             } else {
                 LocalReaderSetup()
             }

@@ -155,6 +155,10 @@ public struct AnalysisDetail: View {
     @ViewState private var byWeek = false
     /// The stat whose history is shown under the Entries tiles, if one was clicked.
     @ViewState private var trend: StatTrend?
+    /// Whether the trend shows a rolling average (over `window` months or weeks) or the average since the start.
+    @ViewState private var rolling = true
+    @ViewState private var monthWindow = 3
+    @ViewState private var weekWindow = 4
     /// The name being renamed on every page, if Rename was clicked.
     @ViewState private var renaming: WordStat?
 
@@ -448,17 +452,22 @@ public struct AnalysisDetail: View {
             WordFlow(spacing: 28, rowSpacing: 14, balanced: true) {
                 StatTile(label: "Entries", value: rhythm.entryCount)
                 if let perMonth = rhythm.perMonth, let perWeek = rhythm.perWeek {
-                    trendTile(.perMonth, StatTile(label: "Average per month", value: perMonth.formatted(.number.precision(.fractionLength(1)))))
-                    trendTile(.perWeek, StatTile(label: "Average per week", value: perWeek.formatted(.number.precision(.fractionLength(1)))))
+                    trendTile(.perMonth, StatTile(label: "Average per month", value: perMonth.formatted(.number.precision(.fractionLength(1))),
+                                                  detail: latest(rhythm.rollingCounts(byWeek: false, window: monthWindow), "\(monthWindow) months")))
+                    trendTile(.perWeek, StatTile(label: "Average per week", value: perWeek.formatted(.number.precision(.fractionLength(1))),
+                                                 detail: latest(rhythm.rollingCounts(byWeek: true, window: weekWindow), "\(weekWindow) weeks")))
                 }
                 if let gap = rhythm.longestGap {
-                    StatTile(label: "Longest gap", value: count(gap.days, "day"), detail: "\(gap.from)\nto \(gap.to)")
+                    entriesTile(StatTile(label: "Longest gap", value: count(gap.days, "day"), detail: "\(gap.from)\nto \(gap.to)"),
+                                ids: gap.entryIDs, label: "Either side of the longest gap")
                 }
                 if let streak = rhythm.longestStreak, streak.days > 1 {
-                    StatTile(label: "Longest streak", value: count(streak.days, "day"), detail: "\(streak.from)\nto \(streak.to)")
+                    entriesTile(StatTile(label: "Longest streak", value: count(streak.days, "day"), detail: "\(streak.from)\nto \(streak.to)"),
+                                ids: streak.entryIDs, label: "Longest streak, \(streak.from) to \(streak.to)")
                 }
                 if rhythm.currentStreak > 1 {
-                    StatTile(label: "Current streak", value: count(rhythm.currentStreak, "day"))
+                    entriesTile(StatTile(label: "Current streak", value: count(rhythm.currentStreak, "day")),
+                                ids: rhythm.currentStreakEntryIDs, label: "Current streak")
                 }
                 if let average = rhythm.averageTime {
                     trendTile(.time, StatTile(label: "Usual time", value: average,
@@ -489,13 +498,21 @@ public struct AnalysisDetail: View {
                 if rhythm.byWeekday.contains(where: { $0.count > 0 }) {
                     Text("By day of the week").font(.subheadline.weight(.semibold)).padding(.top, 4)
                     TimelineChart(series: [TimelineSeries(name: "entries by weekday", color: Theme.chart,
-                                                          bins: rhythm.byWeekday)], noun: ("entry", "entries"))
+                                                          bins: rhythm.byWeekday)], noun: ("entry", "entries"),
+                                  onSelect: { index in
+                                      let bin = rhythm.byWeekday[index]
+                                      model.showEntries(bin.entryIDs, label: "\(bin.label)s")
+                                  })
                         .frame(height: 140)
                 }
                 if rhythm.timedCount > 0 {
                     Text("By time of day").font(.subheadline.weight(.semibold)).padding(.top, 4)
                     TimelineChart(series: [TimelineSeries(name: "entries by time of day", color: Theme.chart,
-                                                          bins: rhythm.byTimeOfDay)], noun: ("entry", "entries"))
+                                                          bins: rhythm.byTimeOfDay)], noun: ("entry", "entries"),
+                                  onSelect: { index in
+                                      let bin = rhythm.byTimeOfDay[index]
+                                      model.showEntries(bin.entryIDs, label: "Written \(bin.label)")
+                                  })
                         .frame(height: 140)
                     Text("Only entries with a time in their heading, \(rhythm.timedCount) of \(rhythm.entryCount).")
                         .font(.caption)
@@ -520,33 +537,90 @@ public struct AnalysisDetail: View {
         .help(trend == kind ? "Hide how this changed over time" : "Show how this changed over time")
     }
 
+    /// A tile that lists the entries behind it when clicked.
+    private func entriesTile(_ tile: StatTile, ids: [String], label: String) -> some View {
+        Button {
+            model.showEntries(ids, label: label)
+        } label: {
+            tile.clickable(selected: false, icon: "list.bullet")
+        }
+        .buttonStyle(.plain)
+        .disabled(ids.isEmpty)
+        .help("List these entries")
+    }
+
+    /// "Latest 4 weeks: 2.5", the rolling figure at the last dated entry.
+    private func latest(_ points: [TrendPoint], _ span: String) -> String? {
+        guard points.count > 1, let last = points.last, last.value != nil else { return nil }
+        return "Latest \(span): \(last.display)"
+    }
+
     private func trendPoints(_ kind: StatTrend, _ rhythm: EntryRhythm) -> [TrendPoint]? {
+        if rolling {
+            switch kind {
+            case .perMonth: return rhythm.rollingCounts(byWeek: false, window: monthWindow)
+            case .perWeek: return rhythm.rollingCounts(byWeek: true, window: weekWindow)
+            case .time: return rhythm.rollingTimes(byWeek: byWeek, window: byWeek ? weekWindow : monthWindow)
+            }
+        }
         switch kind {
-        case .perMonth: rhythm.perMonthTrend
-        case .perWeek: rhythm.perWeekTrend
-        case .time: byWeek ? rhythm.timeTrendByWeek : rhythm.timeTrendByMonth
+        case .perMonth: return rhythm.perMonthTrend
+        case .perWeek: return rhythm.perWeekTrend
+        case .time: return byWeek ? rhythm.timeTrendByWeek : rhythm.timeTrendByMonth
+        }
+    }
+
+    /// Rolling or since the start, and over how many months or weeks.
+    @ViewBuilder
+    private func trendControls(_ kind: StatTrend) -> some View {
+        let weekly = kind == .perWeek || (kind == .time && byWeek)
+        Picker("Average", selection: $rolling) {
+            Text("Rolling").tag(true)
+            Text("Since the Start").tag(false)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        if rolling {
+            if weekly {
+                Picker("Over", selection: $weekWindow) {
+                    ForEach([4, 8, 12], id: \.self) { Text("\($0) weeks").tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+            } else {
+                Picker("Over", selection: $monthWindow) {
+                    ForEach([3, 6, 12], id: \.self) { Text("\($0) months").tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+            }
         }
     }
 
     private func trendSection(_ kind: StatTrend, points: [TrendPoint]) -> some View {
         let title: String
         let note: String
+        let unit = kind == .perWeek || (kind == .time && byWeek) ? "week" : "month"
+        let window = unit == "week" ? weekWindow : monthWindow
         switch kind {
-        case .perMonth:
-            title = "Average per month over time"
-            note = "Each point is the average as it stood at the end of that month, counting only entries dated up to then."
-        case .perWeek:
-            title = "Average per week over time"
-            note = "Each point is the average as it stood at the end of that week, counting only entries dated up to then."
+        case .perMonth, .perWeek:
+            title = "Average per \(unit) over time"
+            note = rolling
+                ? "Each point is the average over the \(window) \(unit)s ending then (fewer at the start), empty \(unit)s included."
+                : "Each point is the average as it stood at the end of that \(unit), counting only entries dated up to then."
         case .time:
             title = "Usual time over time"
-            note = "Each point is the usual time as it stood at the end of that \(byWeek ? "week" : "month"), from entries "
-                + "dated up to then that have a time. Gaps are where there's nothing to average yet."
+            note = (rolling
+                ? "Each point is the usual time over the \(window) \(unit)s ending then, from entries that have a time."
+                : "Each point is the usual time as it stood at the end of that \(unit), from entries dated up to then that have a time.")
+                + " Gaps are where there's nothing to average."
         }
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(title).font(.subheadline.weight(.semibold))
                 Spacer()
+                trendControls(kind)
                 Button("Close") { trend = nil }
                     .buttonStyle(.link)
                     .font(.caption)
@@ -643,6 +717,8 @@ struct StatTile: View {
     var color: Color?
     /// Set on tiles that open a chart: nil on plain tiles, true while the chart is showing.
     var selected: Bool?
+    /// What clicking does: show a chart, or list entries.
+    var icon = "chart.xyaxis.line"
 
     init(label: String, value: String, detail: String? = nil) {
         self.label = label
@@ -664,7 +740,7 @@ struct StatTile: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if selected != nil {
-                    Image(systemName: "chart.xyaxis.line")
+                    Image(systemName: icon)
                         .font(.caption2)
                         .foregroundStyle(selected == true ? Theme.accent : .secondary)
                 }
@@ -696,9 +772,10 @@ struct StatTile: View {
         .padding(.vertical, selected == nil ? 0 : -5)
     }
 
-    func clickable(selected: Bool) -> StatTile {
+    func clickable(selected: Bool, icon: String = "chart.xyaxis.line") -> StatTile {
         var tile = self
         tile.selected = selected
+        tile.icon = icon
         return tile
     }
 }
@@ -896,6 +973,7 @@ struct MatchRow: View {
                     }
                 }
                 Text(snippet)
+                    .entryText()
                     .font(.callout)
                     .lineLimit(2)
                     .foregroundStyle(.primary.opacity(0.85))

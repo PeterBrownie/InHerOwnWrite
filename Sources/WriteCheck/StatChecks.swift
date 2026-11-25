@@ -28,6 +28,10 @@ func runCustomStatChecks() async throws {
     check("counts words, prefixes, and phrases", counted.term.total == 4)
     check("counts the entries they're in", counted.term.entryCount == 2 && counted.term.pageCount == 2)
     check("charts word counts by date", counted.term.byDate.reduce(0) { $0 + $1.count } == 4)
+    check("each bar of a stat's chart lists its entries",
+          counted.term.byDate.filter { $0.count > 0 }.allSatisfy { !$0.entryIDs.isEmpty }
+          && Set(counted.term.byDate.flatMap(\.entryIDs)) == Set(counted.matches.compactMap(\.entryID))
+          && Set(counted.term.byPage.flatMap(\.entryIDs)) == Set(counted.matches.compactMap(\.entryID)))
     check("lists where words were found", counted.matches.count == 2 && counted.matches.allSatisfy { $0.highlight != nil })
     check("a prefix keeps its star", AnalysisSnapshot.pattern("Cry*") == ["cry*"]
           && AnalysisSnapshot.pattern("broke down") == ["broke", "down"])

@@ -73,6 +73,8 @@ private struct CustomStatDetail: View {
     /// The match she's giving a reason to leave out.
     @ViewState private var excluding: TermMatch?
     @ViewState private var showExcluded = false
+    /// The chart bar clicked, narrowing the list to its entries.
+    @ViewState private var barFilter: StatBarFilter?
 
     private static let matchLimit = 5
 
@@ -130,7 +132,11 @@ private struct CustomStatDetail: View {
                 }
                 if bins.count >= 2 {
                     TimelineChart(series: [TimelineSeries(name: stat.name, color: Theme.accent, bins: bins)],
-                                  noun: (singular, stat.unit))
+                                  noun: (singular, stat.unit),
+                                  onSelect: { index in
+                                      let filter = StatBarFilter(axis: axis, label: bins[index].label, entryIDs: Set(bins[index].entryIDs))
+                                      barFilter = barFilter == filter ? nil : filter
+                                  })
                         .frame(height: 210)
                 } else {
                     Text(axis == .date ? "There aren't enough dated entries here to chart. Try By Page."
@@ -215,8 +221,9 @@ private struct CustomStatDetail: View {
                                 .font(.callout)
                                 .lineLimit(2)
                                 .foregroundStyle(.secondary)
+                                .entryText()
                             if let reason = exclusion.reason {
-                                Text("Why: \(reason)").font(.caption).foregroundStyle(.secondary)
+                                Text("Why: \(reason)").font(.caption).foregroundStyle(.secondary).entryText()
                             }
                         }
                         Spacer(minLength: 0)
@@ -281,10 +288,24 @@ private struct CustomStatDetail: View {
         }
     }
 
-    private func matchList(_ matches: [TermMatch]) -> some View {
+    private func matchList(_ all: [TermMatch]) -> some View {
+        let filter = barFilter?.axis == axis ? barFilter : nil
+        let matches = filter.map { filter in all.filter { $0.entryID.map(filter.entryIDs.contains) ?? false } } ?? all
         let shown = showAll ? matches : Array(matches.prefix(Self.matchLimit))
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Where it was found").font(.headline).padding(.top, 6)
+            HStack(spacing: 8) {
+                Text("Where it was found").font(.headline)
+                if let filter {
+                    Button { barFilter = nil } label: {
+                        Label(filter.label, systemImage: "xmark.circle.fill")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .help("Show everywhere it was found")
+                }
+            }
+            .padding(.top, 6)
             ForEach(shown) { match in
                 HStack(alignment: .top, spacing: 4) {
                     Button { model.openPage(match.pageID, highlight: match.highlightedText) } label: {
@@ -583,4 +604,11 @@ public struct ExcludeReasonSheetPreview: View {
     }
 
     public var body: some View { ExcludeReasonSheet(stat: stat, match: match) }
+}
+
+/// A bar clicked on a stat's chart: the list shows only its entries.
+private struct StatBarFilter: Hashable {
+    let axis: TimelineAxis
+    let label: String
+    let entryIDs: Set<String>
 }

@@ -26,8 +26,12 @@ jobs:
       - name: Show the Swift version
         run: swift --version
 
+      # Building and running are separate steps so each one's time shows in the run's summary.
+      - name: Build the checks
+        run: swift build --product WriteCheck
+
       - name: Run the offline checks
-        run: swift run WriteCheck
+        run: swift run --skip-build WriteCheck
 
       - name: Build the app
         run: ./"Start In Her Own Write.command" --release

@@ -75,6 +75,25 @@ func fileContains(_ url: URL, _ needle: Data) -> Bool {
 
 // MARK: - Stubbed Anthropic API
 
+/// How long each group of checks took, in the order they ran.
+nonisolated(unsafe) var timings: [(name: String, seconds: Double)] = []
+
+func timed(_ name: String, _ body: () async throws -> Void) async rethrows {
+    let start = Date()
+    defer { timings.append((name, Date().timeIntervalSince(start))) }
+    try await body()
+}
+
+/// The slowest groups first, so it's clear where the time goes.
+func printTimings() {
+    guard !timings.isEmpty else { return }
+    let total = timings.reduce(0) { $0 + $1.seconds }
+    print("\nTime taken (\(String(format: "%.1f", total)) s in all):")
+    for item in timings.sorted(by: { $0.seconds > $1.seconds }) {
+        print(String(format: "  %6.1f s  %4.0f%%  ", item.seconds, item.seconds / total * 100) + item.name)
+    }
+}
+
 final class StubAPI: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var replies: [(Int, [String: String], String)] = []
     nonisolated(unsafe) static var requests: [(URLRequest, Data)] = []
@@ -574,7 +593,18 @@ func runEntryChecks() {
     check("counts entries per week from Monday", months.byWeek.count == 9 && months.byWeek.map(\.count) == [2, 0, 1, 0, 0, 0, 0, 0, 2]
           && months.byWeek.first?.label == "Week of Jan 5, 2026")
     check("averages over the whole span", abs((months.perMonth ?? 0) - 5.0 / 3) < 1e-9 && abs((months.perWeek ?? 0) - 5.0 / 9) < 1e-9)
-    check("finds the longest gap", months.longestGap == EntryRhythm.Gap(days: 41, from: "Jan 20, 2026", to: "Mar 2, 2026"))
+    check("finds the longest gap", months.longestGap?.days == 41 && months.longestGap?.from == "Jan 20, 2026"
+          && months.longestGap?.to == "Mar 2, 2026")
+    let byID = Dictionary(uniqueKeysWithValues: spacedEntries.map { ($0.id, $0) })
+    check("the longest gap lists the entries either side",
+          months.longestGap?.entryIDs.compactMap { byID[$0]?.day } == [20, 2])
+    check("the longest streak lists its entries", months.longestStreak?.entryIDs.compactMap { byID[$0]?.day } == [5, 6])
+    check("each weekday lists its entries", months.byWeekday[0].entryIDs.count == 2 && months.byWeekday[1].entryIDs.count == 3)
+    // Rolling: weeks of 2, 0, 1, 0, 0, 0, 0, 0, 2 entries over 4 weeks.
+    let rollingWeeks = months.rollingCounts(byWeek: true, window: 4).compactMap(\.value)
+    check("a rolling average covers the weeks ending at each point",
+          rollingWeeks == [2, 1, 1, 0.75, 0.25, 0.25, 0, 0, 0.5])
+    check("a rolling average per month", months.rollingCounts(byWeek: false, window: 2).map(\.display) == ["3.0", "1.5", "1.0"])
     check("tracks the average per month as it stood each month",
           months.perMonthTrend.map(\.display) == ["3.0", "1.5", "1.7"] && months.perWeekTrend.count == 9
           && abs((months.perWeekTrend.last?.value ?? 0) - 5.0 / 9) < 1e-9)
@@ -584,6 +614,9 @@ func runEntryChecks() {
     check("tracks the usual time across midnight without jumping",
           late.timeTrendByMonth.map(\.display) == ["11:00 PM", "12:00 AM", "12:20 AM"]
           && late.timeTrendByMonth.map(\.value) == [-60, 0, 20] && late.averageTime == "12:20 AM")
+    check("a rolling usual time forgets older months",
+          late.rollingTimes(byWeek: false, window: 1).map(\.display) == ["11:00 PM", "1:00 AM", "1:00 AM"])
+    check("each time of day lists its entries", night.byTimeOfDay[0].entryIDs.count == 1 && night.byTimeOfDay[7].entryIDs.count == 1)
     let undated = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:]).entryRhythm()
     check("undated entries have no averages", undated.entryCount == 1 && undated.perMonth == nil && undated.longestGap == nil)
 }
@@ -856,9 +889,23 @@ func runRender(output: URL, sample: URL?) async throws {
               && Set(model.visibleEntries.map(\.id)) == Set(week.entryIDs) && model.selectedEntryID != nil)
         await render(RootView().environmentObject(model).environmentObject(updater), size: size,
                      to: output.appendingPathComponent("8d-week-entries.png"))
+        check("entries opened from Analysis can go back to it", model.canReturnToAnalysis)
         if let journal = model.selectedJournalID { model.selectJournal(journal) }
         check("choosing a journal clears the week", model.entryFilter == nil)
         model.showingAnalysis = true
+        check("being back in Analysis drops the way back", !model.canReturnToAnalysis)
+        if let page = model.pages.first {
+            model.openPage(page.id, highlight: nil)
+            check("a page opened from Analysis can go back to it", model.canReturnToAnalysis && !model.showingAnalysis)
+            await render(RootView().environmentObject(model).environmentObject(updater), size: size,
+                         to: output.appendingPathComponent("8e-page-back-to-analysis.png"))
+            model.returnToAnalysis()
+            check("going back shows Analysis again", model.showingAnalysis && !model.canReturnToAnalysis)
+            model.showingAnalysis = false
+            model.openPage(page.id, highlight: nil)
+            check("a page opened from elsewhere has no way back to Analysis", !model.canReturnToAnalysis)
+            model.showingAnalysis = true
+        }
     } else {
         check("clicking a week shows its entries", false)
     }
@@ -869,6 +916,14 @@ func runRender(output: URL, sample: URL?) async throws {
     model.analysisTerm = "Theo"
     await render(AnalysisDetail().environmentObject(model), size: CGSize(width: 900, height: 1100),
                  to: output.appendingPathComponent("9-analysis-term.png"))
+    model.hidesEntryText = true
+    await render(AnalysisDetail().environmentObject(model), size: CGSize(width: 900, height: 1100),
+                 to: output.appendingPathComponent("9-analysis-term-hidden.png"))
+    model.showingAnalysis = false
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size,
+                 to: output.appendingPathComponent("9-page-hidden.png"))
+    model.showingAnalysis = true
+    model.hidesEntryText = false
     model.analysisTerm = "Theo, park"
     model.accent = .blue
     await render(AnalysisDetail().environmentObject(model), size: CGSize(width: 900, height: 1100),
@@ -1172,34 +1227,35 @@ if arguments.contains("--local") {
             .appendingPathComponent("in-her-own-write-check-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         do {
-            try runVaultChecks(in: directory)
-            runEntryChecks()
-            try runPhotoChecks()
-            try await runPhotoStorageChecks()
-            try await runAPIChecks()
-            try await runQueueChecks()
-            try await runCustomStatChecks()
-            try await runStatCountingChecks()
-            try await runDuplicateChecks()
-            try await runLocalReadingChecks()
-            runSwitchRuleChecks()
-            try runEditingChecks(in: directory)
-            try await runScribbleChecks()
-            await MainActor.run { runBannerChecks() }
-            try await runRotationChecks()
-            try runTiltedCropChecks()
-            try await runWordPlacementChecks()
-            try await runPageScanChecks()
-            try await runSpreadChecks()
-            try runPhotoOrderChecks()
-            try await runFlattenChecks()
-            runUpdaterChecks()
-            runReleaseUpdateChecks()
-            await runMissingRuntimeChecks()
+            try await timed("Vault") { try runVaultChecks(in: directory) }
+            await timed("Entry") { runEntryChecks() }
+            try await timed("Photo") { try runPhotoChecks() }
+            try await timed("Photo storage") { try await runPhotoStorageChecks() }
+            try await timed("API") { try await runAPIChecks() }
+            try await timed("Queue") { try await runQueueChecks() }
+            try await timed("Custom stat") { try await runCustomStatChecks() }
+            try await timed("Stat counting") { try await runStatCountingChecks() }
+            try await timed("Duplicate") { try await runDuplicateChecks() }
+            try await timed("Local reading") { try await runLocalReadingChecks() }
+            await timed("Switch rule") { runSwitchRuleChecks() }
+            try await timed("Editing") { try runEditingChecks(in: directory) }
+            try await timed("Scribble") { try await runScribbleChecks() }
+            await timed("Banner") { await MainActor.run { runBannerChecks() } }
+            try await timed("Rotation") { try await runRotationChecks() }
+            try await timed("Tilted crop") { try runTiltedCropChecks() }
+            try await timed("Word placement") { try await runWordPlacementChecks() }
+            try await timed("Page scan") { try await runPageScanChecks() }
+            try await timed("Spread") { try await runSpreadChecks() }
+            try await timed("Photo order") { try runPhotoOrderChecks() }
+            try await timed("Flatten") { try await runFlattenChecks() }
+            await timed("Updater") { runUpdaterChecks() }
+            await timed("Release update") { runReleaseUpdateChecks() }
+            await timed("Missing runtime") { await runMissingRuntimeChecks() }
         } catch {
             failures += 1
             print("  FAIL  stopped early: \(error)")
         }
+        printTimings()
         print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
         exit(failures == 0 ? 0 : 1)
     }

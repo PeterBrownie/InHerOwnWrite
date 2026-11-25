@@ -201,11 +201,14 @@ public struct EntryRhythm: Sendable {
         public let days: Int
         public let from: String
         public let to: String
+        /// The entries it covers: for a gap, those on the days either side; for a streak, those in it.
+        public var entryIDs: [String] = []
 
-        public init(days: Int, from: String, to: String) {
+        public init(days: Int, from: String, to: String, entryIDs: [String] = []) {
             self.days = days
             self.from = from
             self.to = to
+            self.entryIDs = entryIDs
         }
     }
 
@@ -227,6 +230,7 @@ public struct EntryRhythm: Sendable {
     public var longestStreak: Gap?
     /// The run that ends today or yesterday; 0 when the last entry is older than that.
     public var currentStreak = 0
+    public var currentStreakEntryIDs: [String] = []
     /// Entries with a time in their heading, in three-hour blocks from midnight.
     public var byTimeOfDay: [TimelineBin] = []
     public var timedCount = 0
@@ -238,6 +242,43 @@ public struct EntryRhythm: Sendable {
     /// The usual time as it stood at the end of each month and week, from dated entries with a time.
     public var timeTrendByMonth: [TrendPoint] = []
     public var timeTrendByWeek: [TrendPoint] = []
+    /// The times (minutes after midnight) written in each month's and week's entries, for rolling figures.
+    public var minutesByMonth: [[Int]] = []
+    public var minutesByWeek: [[Int]] = []
+    /// The usual time over everything, in minutes after midnight.
+    public var usualMinute: Int?
+
+    /// Entries per month, or per week, averaged over the `window` months or weeks ending at each point
+    /// (fewer at the start, before there are that many).
+    public func rollingCounts(byWeek: Bool, window: Int) -> [TrendPoint] {
+        let bins = byWeek ? self.byWeek : byMonth
+        let size = max(window, 1)
+        return bins.indices.map { index in
+            let span = bins[max(0, index - size + 1)...index]
+            let value = Double(span.reduce(0) { $0 + $1.count }) / Double(span.count)
+            return TrendPoint(id: index, label: bins[index].label, shortLabel: bins[index].shortLabel, value: value,
+                              display: value.formatted(.number.precision(.fractionLength(1))))
+        }
+    }
+
+    /// The usual time over the `window` months or weeks ending at each point; nil where none of them has a time.
+    public func rollingTimes(byWeek: Bool, window: Int) -> [TrendPoint] {
+        let bins = byWeek ? self.byWeek : byMonth
+        let minutes = byWeek ? minutesByWeek : minutesByMonth
+        guard let overall = usualMinute, minutes.count == bins.count else { return [] }
+        let size = max(window, 1)
+        return bins.indices.map { index in
+            let span = minutes[max(0, index - size + 1)...index].flatMap { $0 }
+            guard let minute = AnalysisSnapshot.usualMinute(span) else {
+                return TrendPoint(id: index, label: bins[index].label, shortLabel: bins[index].shortLabel, value: nil, display: "")
+            }
+            var unwrapped = minute
+            while unwrapped < overall - 720 { unwrapped += 1440 }
+            while unwrapped >= overall + 720 { unwrapped -= 1440 }
+            return TrendPoint(id: index, label: bins[index].label, shortLabel: bins[index].shortLabel,
+                              value: Double(unwrapped), display: AnalysisSnapshot.clock(minute))
+        }
+    }
 }
 
 public struct TermResult: Sendable {
@@ -583,6 +624,11 @@ public struct AnalysisSnapshot: Sendable {
         }
 
         let distinct = Array(Set(dated.map(\.day))).sorted()
+        // Entries in date order on the days chosen.
+        func entriesOn(_ include: (Int) -> Bool) -> [String] {
+            dated.filter { include($0.day) }.sorted { ($0.day, $0.entry) < ($1.day, $1.entry) }.map(\.entry)
+        }
+        func entriesOn(_ days: ClosedRange<Int>) -> [String] { entriesOn { days.contains($0) } }
         let gap = zip(distinct, distinct.dropFirst()).max { ($0.1 - $0.0) < ($1.1 - $1.0) }
 
         let weekdayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -603,15 +649,20 @@ public struct AnalysisSnapshot: Sendable {
             byWeek: byWeek,
             perMonth: Double(dated.count) / Double(months),
             perWeek: Double(dated.count) / Double(weeks),
-            longestGap: gap.map { EntryRhythm.Gap(days: $0.1 - $0.0, from: Self.label(day: $0.0), to: Self.label(day: $0.1)) },
+            longestGap: gap.map { gap in
+                EntryRhythm.Gap(days: gap.1 - gap.0, from: Self.label(day: gap.0), to: Self.label(day: gap.1),
+                                entryIDs: entriesOn { $0 == gap.0 || $0 == gap.1 })
+            },
             first: Self.label(day: firstDay),
             last: Self.label(day: lastDay)
         )
         rhythm.byWeekday = byWeekday
         rhythm.longestStreak = longest.map {
-            EntryRhythm.Gap(days: $0.end - $0.start + 1, from: Self.label(day: $0.start), to: Self.label(day: $0.end))
+            EntryRhythm.Gap(days: $0.end - $0.start + 1, from: Self.label(day: $0.start), to: Self.label(day: $0.end),
+                            entryIDs: entriesOn($0.start...$0.end))
         }
         rhythm.currentStreak = current
+        if current > 1, let run = runs.last { rhythm.currentStreakEntryIDs = entriesOn(run.start...run.end) }
         (rhythm.byTimeOfDay, rhythm.timedCount, rhythm.averageTime) = timeOfDay(pages: pages)
 
         func running(_ bins: [TimelineBin]) -> [TrendPoint] {
@@ -647,6 +698,15 @@ public struct AnalysisSnapshot: Sendable {
             }
             rhythm.timeTrendByMonth = runningTime(byMonth, index: month)
             rhythm.timeTrendByWeek = runningTime(byWeek) { week($0) - firstWeek }
+            rhythm.usualMinute = overall
+            var byMonthMinutes = [[Int]](repeating: [], count: byMonth.count)
+            var byWeekMinutes = [[Int]](repeating: [], count: byWeek.count)
+            for item in timed {
+                byMonthMinutes[month(item.day)].append(item.minute)
+                byWeekMinutes[week(item.day) - firstWeek].append(item.minute)
+            }
+            rhythm.minutesByMonth = byMonthMinutes
+            rhythm.minutesByWeek = byWeekMinutes
         }
         return rhythm
     }
@@ -688,8 +748,11 @@ public struct AnalysisSnapshot: Sendable {
         let size = max(1, Int((Double(ordered.count) / Double(Self.maxPageBins)).rounded(.up)))
         let binCount = Int((Double(ordered.count) / Double(size)).rounded(.up))
         var counts = [Int](repeating: 0, count: binCount)
+        var entries = [[String]](repeating: [], count: binCount)
         for (unit, count) in zip(units, perUnit) {
-            if let position = positions[unit.pageID] { counts[position / size] += count }
+            guard let position = positions[unit.pageID] else { continue }
+            counts[position / size] += count
+            if count > 0, !entries[position / size].contains(unit.entryID) { entries[position / size].append(unit.entryID) }
         }
         let multipleJournals = Set(ordered.map(\.journal)).count > 1
         return (0..<binCount).map { bin in
@@ -701,7 +764,7 @@ public struct AnalysisSnapshot: Sendable {
             let name = multipleJournals ? "\(journalNames[first.journal] ?? "Journal"), " : ""
             let pages = min((bin + 1) * size, ordered.count) - bin * size
             return TimelineBin(id: bin, label: name + range, shortLabel: "p. \(first.number)",
-                               count: counts[bin], pageCount: pages)
+                               count: counts[bin], pageCount: pages, entryIDs: entries[bin])
         }
     }
 
@@ -744,15 +807,17 @@ public struct AnalysisSnapshot: Sendable {
         let binCount = bucket(last) + 1
         var counts = [Int](repeating: 0, count: binCount)
         var pages = [Set<UUID>](repeating: [], count: binCount)
+        var entries = [[String]](repeating: [], count: binCount)
         for item in dated {
             let index = bucket(item.day)
             counts[index] += item.count
             pages[index].insert(item.unit.pageID)
+            if item.count > 0, !entries[index].contains(item.unit.entryID) { entries[index].append(item.unit.entryID) }
         }
         return (0..<binCount).map { index in
             let names = label(index)
             return TimelineBin(id: index, label: names.full, shortLabel: names.short,
-                               count: counts[index], pageCount: pages[index].count)
+                               count: counts[index], pageCount: pages[index].count, entryIDs: entries[index])
         }
     }
 
@@ -789,14 +854,17 @@ public struct AnalysisSnapshot: Sendable {
         guard !minutes.isEmpty else { return ([], 0, nil) }
         var counts = [Int](repeating: 0, count: 8)
         var binPages = [Set<UUID>](repeating: [], count: 8)
+        var binEntries = [[(minute: Int, entry: String)]](repeating: [], count: 8)
         for (entry, minute) in minutes {
             counts[minute / 180] += 1
             binPages[minute / 180].formUnion(pages[entry] ?? [])
+            binEntries[minute / 180].append((minute, entry))
         }
         let short = ["12a", "3a", "6a", "9a", "12p", "3p", "6p", "9p"]
         let bins = (0..<8).map { index in
             TimelineBin(id: index, label: "\(Self.clock(index * 180)) to \(Self.clock(index * 180 + 179))", shortLabel: short[index],
-                        count: counts[index], pageCount: binPages[index].count)
+                        count: counts[index], pageCount: binPages[index].count,
+                        entryIDs: binEntries[index].sorted { ($0.minute, $0.entry) < ($1.minute, $1.entry) }.map(\.entry))
         }
         return (bins, minutes.count, Self.usualMinute(Array(minutes.values)).map(Self.clock))
     }

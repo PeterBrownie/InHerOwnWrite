@@ -9,6 +9,13 @@ private struct ReaderControls<Extra: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            if model.canReturnToAnalysis {
+                Button { model.returnToAnalysis() } label: {
+                    Label("Analysis", systemImage: "chevron.backward")
+                }
+                .help("Back to Analysis, where you were")
+            }
+
             Spacer(minLength: 8)
 
             extra
@@ -296,12 +303,12 @@ private struct PageColumn: View {
                 textPane
             } else if isCompact {
                 VSplitView {
-                    PhotoPane(pageID: page.id).frame(minHeight: 180)
+                    PhotoPane(pageID: page.id).entryCover().frame(minHeight: 180)
                     textPane.frame(minHeight: 140)
                 }
             } else {
                 HSplitView {
-                    PhotoPane(pageID: page.id).frame(minWidth: 280)
+                    PhotoPane(pageID: page.id).entryCover().frame(minWidth: 280)
                     textPane.frame(minWidth: 320)
                 }
             }
@@ -398,6 +405,7 @@ private struct PageColumn: View {
             )
             .padding(4)
             .background(Theme.card)
+            .entryCover()
         } else {
             // Flowing paragraphs can be edited too; each change is made to the text as written.
             JournalTextEditor(
@@ -413,6 +421,7 @@ private struct PageColumn: View {
             )
             .padding(4)
             .background(Theme.card)
+            .entryCover()
         }
     }
 }
@@ -453,6 +462,7 @@ struct EntryReader: View {
                         .padding(12)
                     }
                     .background(Theme.paper)
+                    .entryCover()
                     .frame(minWidth: 280)
                     entryText.frame(minWidth: 320)
                 }
@@ -520,6 +530,7 @@ struct EntryReader: View {
                         .lineSpacing(5)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .entryText()
                         .id(part.id)
                     Button("Edit on Page \(part.pageNumber)") {
                         model.openPage(part.pageID, highlight: model.findText.isEmpty ? nil : model.findText)

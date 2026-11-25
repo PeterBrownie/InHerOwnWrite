@@ -23,15 +23,23 @@ public struct LibraryView: View {
             }
             .navigationSplitViewColumnWidth(min: 230, ideal: 270, max: 360)
         } detail: {
-            Group {
-                if model.showingAnalysis {
+            ZStack {
+                // Kept, hidden, while a page opened from it is shown, so going back finds it as it was.
+                if model.showingAnalysis || model.canReturnToAnalysis {
                     AnalysisDetail()
-                } else if model.libraryMode == .entries, let entry = model.selectedEntry {
-                    EntryReader(entry: entry).id(entry.id)
-                } else if model.libraryMode == .pages, model.selectedPage != nil {
-                    PageReader()
-                } else {
-                    EmptyDetail()
+                        .opacity(model.showingAnalysis ? 1 : 0)
+                        .allowsHitTesting(model.showingAnalysis)
+                        .disabled(!model.showingAnalysis)
+                        .accessibilityHidden(!model.showingAnalysis)
+                }
+                if !model.showingAnalysis {
+                    if model.libraryMode == .entries, let entry = model.selectedEntry {
+                        EntryReader(entry: entry).id(entry.id)
+                    } else if model.libraryMode == .pages, model.selectedPage != nil {
+                        PageReader()
+                    } else {
+                        EmptyDetail()
+                    }
                 }
             }
             // Inside the detail column, below its toolbar, so it stays clear of the sidebar.
@@ -45,6 +53,14 @@ public struct LibraryView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Toggle(isOn: $model.hidesEntryText) {
+                    Label(model.hidesEntryText ? "Show Entry Text" : "Hide Entry Text",
+                          systemImage: model.hidesEntryText ? "eye.slash.fill" : "eye")
+                }
+                .toggleStyle(.button)
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .help(model.hidesEntryText ? "Show what you wrote again (⇧⌘H)"
+                      : "Blur what you wrote, so you can show Analysis to someone (⇧⌘H)")
                 Button { model.showUpload = true } label: {
                     Label("Add Page", systemImage: "plus")
                 }
@@ -408,6 +424,7 @@ private struct EntryRow: View {
                 .font(.system(.callout, design: .serif))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+                .entryText()
         }
         .padding(.vertical, 3)
         .contextMenu {
@@ -449,6 +466,7 @@ private struct PageRow: View {
                 .font(.system(.callout, design: .serif))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+                .entryText()
         }
         .padding(.vertical, 3)
     }
