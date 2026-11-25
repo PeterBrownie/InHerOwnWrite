@@ -23,6 +23,7 @@ public struct UploadSheet: View {
     @AppStorage("flattenPages") private var flattenPages = true
     /// Whether photos show both pages of the open journal, to be split at the fold.
     @AppStorage("bothPages") private var bothPages = false
+    @ViewState private var modeSetByPhoto = false
     /// Where the fold divides the crop, as a fraction of its width, when the photo shows both pages.
     @ViewState private var split = 0.5
     @ViewState private var spreadSuggestion: SpreadScanResult?
@@ -543,6 +544,10 @@ public struct UploadSheet: View {
     /// Switching between one page and both looks again. Both pages are levelled along with the fold, so the
     /// split line follows it; one page is flattened instead, so a tilt found for it isn't applied.
     private func modeChanged() {
+        if modeSetByPhoto {
+            modeSetByPhoto = false
+            return
+        }
         if bothPages, straighten == 0, let tilt = orientation?.tilt { straighten = (tilt * 2).rounded() / 2 }
         findPages(reorient: false)
     }
@@ -559,7 +564,7 @@ public struct UploadSheet: View {
     private func findPages(reorient: Bool) {
         guard let jpeg else { return }
         scanCount += 1
-        let count = scanCount, spread = bothPages
+        let count = scanCount, chosen = bothPages
         let turns = quarterTurns, tilt = straighten
         isScanning = true
         Task {
@@ -567,8 +572,13 @@ public struct UploadSheet: View {
                 () -> (PageScan.Orientation, PageScan.Orientation, PageScanResult?, SpreadScanResult?) in
                 var seen = PageScan.Orientation(quarterTurns: turns, tilt: tilt)
                 var way = seen
+                var spread = chosen
                 if reorient {
                     seen = await PageScan.orientation(jpeg: jpeg)
+                    // A new photo decides for itself whether it shows one page or both.
+                    if let upright = try? PagePhoto.rotated(jpeg, degrees: Double(seen.quarterTurns) * 90 + seen.tilt) {
+                        spread = await PageScan.showsTwoPages(jpeg: upright)
+                    }
                     // The slider moves in half degrees.
                     way = PageScan.Orientation(quarterTurns: seen.quarterTurns,
                                                tilt: spread ? (seen.tilt * 2).rounded() / 2 : 0)
@@ -581,6 +591,12 @@ public struct UploadSheet: View {
             guard count == scanCount, self.jpeg == jpeg else { return }
             let (seen, way, page, pages) = found
             isScanning = false
+            let detected = pages != nil
+            if reorient, detected != bothPages {
+                // The scan already looked at the photo this way, so the switch doesn't start another.
+                modeSetByPhoto = true
+                bothPages = detected
+            }
             if reorient { orientation = seen }
             if way.quarterTurns != quarterTurns {
                 quarterTurns = way.quarterTurns

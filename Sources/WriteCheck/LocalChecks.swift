@@ -346,6 +346,8 @@ func runSpreadChecks() async throws {
             && scan.crop.minY < 120.0 / 1800 && scan.crop.maxY > 1680.0 / 1800)
     check("leaves out most of the table", scan.crop.minX > 0.03 && scan.crop.maxX < 0.99)
     check("reads both page numbers", scan.leftNumber == 48 && scan.rightNumber == 49)
+    let bothShown = await PageScan.showsTwoPages(jpeg: photo)
+    check("sees that a photo shows both pages", bothShown)
 
     let (left, right) = SpreadScanResult.halves(of: scan.crop, split: scan.split)
     for (name, half, has, lacks) in [("left", left, "ferry", "island"), ("right", right, "island", "ferry")] {
@@ -416,6 +418,8 @@ func runPageScanChecks() async throws {
 
     let spread = twoPageSpread()
     let scan = await PageScan.analyze(jpeg: spread)
+    let stripShown = await PageScan.showsTwoPages(jpeg: spread)
+    check("a page with a strip of the next isn't two pages", !stripShown)
     let foldX = 1470.0 / 1800
     check("finds the page number", scan.pageNumber == 212)
     check("cuts at the fold, leaving out the facing page", scan.crop.maxX < (1540.0 / 1800) && scan.crop.maxX > foldX - 0.02)

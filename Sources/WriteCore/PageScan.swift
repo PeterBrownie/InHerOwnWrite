@@ -178,6 +178,52 @@ public enum PageScan {
         return (try? await analyzeSpread(image: image)) ?? .whole
     }
 
+    /// Whether an upright photo shows both pages of an open journal, judged from a quick read of it.
+    public static func showsTwoPages(jpeg: Data) async -> Bool {
+        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return false }
+        let scale = min(1, 1400 / Double(max(image.width, image.height)))
+        let small = scale < 1 ? PagePhoto.scaled(image, by: scale) ?? image : image
+        var request = RecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        guard let found = try? await request.perform(on: small) else { return false }
+        let text = found.compactMap { observation -> FoundText? in
+            guard let string = observation.topCandidates(1).first?.string else { return nil }
+            return FoundText(text: string, box: PageLayoutFinder.topLeft(observation.boundingBox.cgRect))
+        }
+        return showsTwoPages(text: text, paper: PaperMap(image: small))
+    }
+
+    /// Two pages when the writing parts at a fold near the middle of the paper: on one page, lines run
+    /// across the middle; on two, they stop at the fold, with writing on both sides. A single page that
+    /// shows a strip of the facing page has its fold near an edge, so it doesn't count.
+    static func showsTwoPages(text: [FoundText], paper: PaperMap?) -> Bool {
+        let lines = text.filter { $0.box.width > 0.03 && $0.text.count >= 3 }
+        guard lines.count >= 6 else { return false }
+        let span = paper?.columnProfile()?.paper ?? 0...1
+        let width = span.upperBound - span.lowerBound
+        guard width > 0.3 else { return false }
+        let middle = span.lowerBound + width / 2
+        let window = (middle - 0.2 * width)...(middle + 0.2 * width)
+        let shadow = paper?.spreadFold(within: span)
+        // A shadowed fold near an edge is the facing page's strip beside a single page.
+        if let shadow, !window.contains(shadow) { return false }
+        guard let fold = writingGap(text: lines, within: window, favoring: shadow ?? middle) else { return false }
+        let crossing = lines.filter { $0.box.minX < fold - 0.01 && $0.box.maxX > fold + 0.01 }.count
+        let left = lines.filter { $0.box.maxX <= fold + 0.01 }
+        let right = lines.filter { $0.box.minX >= fold - 0.01 }
+        let share = Double(min(left.count, right.count)) / Double(lines.count)
+        // Each page's writing spans a similar width; a few words peeking in from the facing page don't.
+        func extent(_ side: [FoundText]) -> Double {
+            (side.map(\.box.maxX).max() ?? 0) - (side.map(\.box.minX).min() ?? 0)
+        }
+        let widths = [extent(left), extent(right)]
+        let balanced = (widths.min() ?? 0) >= 0.45 * (widths.max() ?? 1)
+        return Double(crossing) <= Double(lines.count) * 0.1 && share >= 0.2 && balanced
+    }
+
     /// Both pages of an open journal: the paper of both, split at the fold, with each page's number.
     public static func analyzeSpread(image: CGImage) async throws -> SpreadScanResult {
         var request = RecognizeTextRequest()
