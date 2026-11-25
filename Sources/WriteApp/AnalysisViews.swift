@@ -110,9 +110,22 @@ public struct AnalysisDetail: View {
         _trend = ViewState(wrappedValue: showingTrend)
     }
 
+    /// What's typed in the search field but not looked up yet: the lookup waits until typing pauses for a
+    /// second (or Return), since redrawing the charts at every key press lags.
+    @ViewState private var typed: String?
+
     private var term: String {
         get { model.analysisTerm }
-        nonmutating set { model.analysisTerm = newValue }
+        nonmutating set {
+            typed = nil
+            model.analysisTerm = newValue
+        }
+    }
+
+    /// Looks up what's typed now, without waiting.
+    private func applyTyped() {
+        guard let typed else { return }
+        term = typed
     }
 
     private func lookUp(_ text: String) {
@@ -228,10 +241,18 @@ public struct AnalysisDetail: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Type a word, name, or phrase; separate several with commas", text: $model.analysisTerm)
+                TextField("Type a word, name, or phrase; separate several with commas",
+                          text: Binding(get: { typed ?? term }, set: { typed = $0 }))
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
-                if !term.isEmpty {
+                    .onSubmit { applyTyped() }
+                    .task(id: typed) {
+                        guard let typed, typed != term else { return }
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled, self.typed == typed else { return }
+                        applyTyped()
+                    }
+                if !(typed ?? term).isEmpty {
                     Button { term = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)

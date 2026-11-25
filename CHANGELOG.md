@@ -6,6 +6,11 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 40 (November 24, 2026)
+
+- **Analysis search no longer lags while typing.** It waits until you pause for a second before looking the
+  words up and redrawing the charts. Press Return to look up right away.
+
 ## Build 39 (November 24, 2026)
 
 - **Analysis counts people, not just names as written.** Once a page says who a name means, the Names list
