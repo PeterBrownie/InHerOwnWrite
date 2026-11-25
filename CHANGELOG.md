@@ -6,7 +6,7 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
-## Build 48 (November 25, 2026)
+## Build 49 (November 25, 2026)
 
 - **Counting a stat with Claude no longer crashes.** The app quit as soon as the first pages came back
   when Claude quoted words that weren't written word for word in one entry (a quote across two entries,

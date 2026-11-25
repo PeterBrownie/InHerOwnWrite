@@ -200,7 +200,7 @@ final class StatStubAPI: URLProtocol, @unchecked Sendable {
         } else {
             let number = Self.lock.withLock { () -> Int in Self.readings += 1; return Self.readings }
             let line = "On an invented day number \(number) I walked to the shop, and later I cried a little. "
-            text = reply(text: String(repeating: line, count: 18))
+            text = reply(text: String(repeating: line, count: 40))
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) { [self] in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: [:])!
@@ -232,11 +232,12 @@ func runStatCountingChecks() async throws {
         return
     }
     let jpeg = try PagePhoto.prepare(syntheticPhoto(width: 300, height: 400))
-    let total = 250
+    // Enough text for several batches; more pages only make the reading slow on GitHub's Macs.
+    let total = 60
     for number in 1...total {
         _ = model.addPage(journalID: journal.id, number: number, photo: jpeg, replacing: false)
     }
-    var deadline = Date().addingTimeInterval(60)
+    var deadline = Date().addingTimeInterval(240)
     while Date() < deadline, model.pages.contains(where: { $0.status == .reading || $0.status == .waiting }) {
         try await Task.sleep(nanoseconds: 50_000_000)
     }
@@ -248,12 +249,12 @@ func runStatCountingChecks() async throws {
     check("every read page waits to be counted", model.pagesToCount(stat).count == total)
     StatStubAPI.countRequests = 0
     model.countStat(stat.id)
-    deadline = Date().addingTimeInterval(60)
+    deadline = Date().addingTimeInterval(120)
     while Date() < deadline, model.statCounting[stat.id] != nil {
         try await Task.sleep(nanoseconds: 50_000_000)
     }
     check("counting finishes without a problem", model.statCounting[stat.id] == nil)
-    check("counting is sent in batches", StatStubAPI.countRequests > 1)
+    check("counting is sent in batches", StatStubAPI.countRequests >= 3)
     check("every page is counted", model.pagesToCount(stat).isEmpty
           && model.statFindings(stat).count == total)
     model.lock()

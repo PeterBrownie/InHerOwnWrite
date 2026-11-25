@@ -321,7 +321,7 @@ Not started. Listed so they aren't forgotten.
 - **Custom stats haven't been tried against the real API** (November 25, 2026). The requests, schemas, and
   saving pass the offline checks with a stubbed network. Planning a stat and counting old pages were first
   run live in the app on November 25, 2026: counting crashed as soon as a quote came back that wasn't
-  written word for word in one entry (fixed in build 48). Counting while a page is read hasn't been run
+  written word for word in one entry (fixed in build 49). Counting while a page is read hasn't been run
   live, and the quality of Claude's counts and quotes is unmeasured. The duplicate warnings in the add-page sheet and on pages haven't been tried by
   hand either.
 
