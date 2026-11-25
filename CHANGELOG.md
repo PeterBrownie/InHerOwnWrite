@@ -6,6 +6,18 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 46 (November 25, 2026)
+
+- **Click a week in Analysis to see its entries.** In the Entries chart, clicking a week (or a month) opens
+  the Entries list showing just the entries from it, labeled at the top. Click ✕ on the label to see all
+  entries again.
+- **Chart details no longer cover the bar.** The details shown when you point at a bar sit above it, or
+  beside it when the bar is too tall.
+- **Bars light up when you point at them**, brightening a little and fading back as the pointer leaves.
+- **Clearer reading buttons.** A page that hasn't been read now says **Read with Claude**. On a page that's
+  already read, reading on this Mac has moved into the page's **⋯** menu as **Read Again on This Mac**, next
+  to **Read Again with Claude…**.
+
 ## Build 45 (November 25, 2026)
 
 - **Sort entries.** Above the entries list, sort by date or by length, oldest or newest first, shortest or

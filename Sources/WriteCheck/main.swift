@@ -403,6 +403,24 @@ func runEntryChecks() {
     check("a star waits while its page has no text", EntryStars.reconcile([star], entries: [], pageIDs: allPages) == [star])
     check("a star on a deleted page is dropped", EntryStars.reconcile([star], entries: [], pageIDs: []).isEmpty)
 
+    // Chart hover details never cover their bar.
+    let plot = CGRect(x: 36, y: 10, width: 600, height: 146)
+    let bounds = CGSize(width: 636, height: 180)
+    let tip = CGSize(width: 170, height: 40)
+    let short = CGRect(x: 300, y: 120, width: 20, height: 36)
+    let tall = CGRect(x: 300, y: 12, width: 20, height: 144)
+    let tallAtRight = CGRect(x: 610, y: 12, width: 20, height: 144)
+    func box(_ center: CGPoint) -> CGRect {
+        CGRect(x: center.x - tip.width / 2, y: center.y - tip.height / 2, width: tip.width, height: tip.height)
+    }
+    let overShort = box(ChartTooltip.spot(size: tip, bar: short, plot: plot, bounds: bounds))
+    check("details go above a short bar", !overShort.intersects(short) && overShort.maxY <= short.minY)
+    let besideTall = box(ChartTooltip.spot(size: tip, bar: tall, plot: plot, bounds: bounds))
+    check("details go beside a tall bar", !besideTall.intersects(tall) && besideTall.minX >= tall.maxX)
+    let leftOfTall = box(ChartTooltip.spot(size: tip, bar: tallAtRight, plot: plot, bounds: bounds))
+    check("details go to the left of a tall bar at the right edge", !leftOfTall.intersects(tallAtRight)
+          && leftOfTall.maxX <= tallAtRight.minX && leftOfTall.minX >= 0)
+
     let rollover = [page(1)]
     let rolloverText = [rollover[0].id: "December 30, 2025\nlate\nJanuary 2\nearly"]
     let rolled = EntryBuilder.build(pages: rollover, journalOrder: [journal]) { rolloverText[$0] ?? "" }
@@ -829,6 +847,21 @@ func runRender(output: URL, sample: URL?) async throws {
     if let gapPage { model.deletePage(id: gapPage.id) }
     model.showingAnalysis = true
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("8-analysis.png"))
+    // Clicking a week in Analysis lists just that week's entries.
+    let rhythm = AnalysisSnapshot(entries: model.entries, includedPages: Set(model.pages.map(\.id)), names: [],
+                                  journalNames: [:]).entryRhythm()
+    if let week = rhythm.byWeek.first(where: { $0.count > 0 }) {
+        model.showEntries(week.entryIDs, label: week.label)
+        check("clicking a week shows its entries", !model.showingAnalysis && model.libraryMode == .entries
+              && Set(model.visibleEntries.map(\.id)) == Set(week.entryIDs) && model.selectedEntryID != nil)
+        await render(RootView().environmentObject(model).environmentObject(updater), size: size,
+                     to: output.appendingPathComponent("8d-week-entries.png"))
+        if let journal = model.selectedJournalID { model.selectJournal(journal) }
+        check("choosing a journal clears the week", model.entryFilter == nil)
+        model.showingAnalysis = true
+    } else {
+        check("clicking a week shows its entries", false)
+    }
     await render(AnalysisDetail(showingTrend: .perMonth).environmentObject(model), size: CGSize(width: 900, height: 900),
                  to: output.appendingPathComponent("8b-analysis-trend.png"))
     await render(AnalysisDetail(showingTrend: .time).environmentObject(model), size: CGSize(width: 900, height: 900),

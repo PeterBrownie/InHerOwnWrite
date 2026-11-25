@@ -179,6 +179,7 @@ private struct LibraryColumn: View {
 
     private var title: String {
         if isSearching { return "Results" }
+        if model.libraryMode == .entries, model.entryFilter != nil { return "Entries" }
         return model.selectedJournalID.map(model.journalName) ?? "Pages"
     }
 
@@ -192,6 +193,29 @@ private struct LibraryColumn: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
 
+            if model.libraryMode == .entries, let filter = model.entryFilter {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .foregroundStyle(Theme.accent)
+                    Text(filter.label)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button {
+                        model.entryFilter = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Show all entries")
+                }
+                .font(.callout)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            }
             if model.libraryMode == .entries {
                 EntryListControls()
                     .padding(.horizontal, 10)
@@ -293,7 +317,13 @@ private struct EntryList: View {
 
     var body: some View {
         if model.visibleEntries.isEmpty {
-            if model.showsStarredOnly {
+            if model.entryFilter != nil {
+                ContentUnavailableView {
+                    Label("No matches", systemImage: "line.3.horizontal.decrease.circle")
+                } description: {
+                    Text("None of these entries matches the search or the Starred filter.")
+                }
+            } else if model.showsStarredOnly {
                 ContentUnavailableView {
                     Label(isSearching ? "No matches" : "No starred entries", systemImage: "star")
                 } description: {
@@ -310,7 +340,8 @@ private struct EntryList: View {
             }
         } else {
             List(model.visibleEntries, selection: $model.selectedEntryID) { entry in
-                EntryRow(entry: entry, showJournal: isSearching || (model.showsStarredOnly && model.journals.count > 1))
+                EntryRow(entry: entry, showJournal: isSearching
+                         || ((model.showsStarredOnly || model.entryFilter != nil) && model.journals.count > 1))
                     .tag(entry.id)
             }
         }

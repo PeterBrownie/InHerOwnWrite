@@ -238,7 +238,7 @@ public struct AnalysisDetail: View {
             HStack {
                 Label("\(self.count(count, "page")) read before names were added.", systemImage: "info.circle")
                 Spacer()
-                Button("Read Again…") { confirmRead = true }
+                Button("Read Again with Claude…") { confirmRead = true }
                     .disabled(!model.hasAPIKey)
             }
             .font(.callout)
@@ -443,7 +443,10 @@ public struct AnalysisDetail: View {
                     .foregroundStyle(.secondary)
             } else {
                 if bins.count >= 2 {
-                    TimelineChart(series: [TimelineSeries(name: "entries", color: Theme.chart, bins: bins)], noun: ("entry", "entries"))
+                    TimelineChart(series: [TimelineSeries(name: "entries", color: Theme.chart, bins: bins)], noun: ("entry", "entries"),
+                                  onSelect: { index in
+                                      model.showEntries(bins[index].entryIDs, label: bins[index].label)
+                                  })
                         .frame(height: 180)
                 }
                 if rhythm.byWeekday.contains(where: { $0.count > 0 }) {
@@ -968,6 +971,23 @@ private struct HiddenWordsPopover: View {
     }
 }
 
+/// Where a chart's hover details go.
+public enum ChartTooltip {
+    /// The center for details of `size` about `bar` (the hovered slot's bars together): above it when there's
+    /// room inside the chart, else beside it on whichever side fits, else above it reaching out of the chart.
+    /// Never over the bar.
+    public static func spot(size: CGSize, bar: CGRect, plot: CGRect, bounds: CGSize) -> CGPoint {
+        let gap: CGFloat = 8
+        let x = min(max(bar.midX, size.width / 2), max(bounds.width - size.width / 2, size.width / 2))
+        let above = CGPoint(x: x, y: bar.minY - gap - size.height / 2)
+        if bar.minY - gap - size.height >= 0 { return above }
+        let y = min(max(bar.minY + size.height / 2, plot.minY + size.height / 2), plot.maxY - size.height / 2)
+        if bar.maxX + gap + size.width <= bounds.width { return CGPoint(x: bar.maxX + gap + size.width / 2, y: y) }
+        if bar.minX - gap - size.width >= 0 { return CGPoint(x: bar.minX - gap - size.width / 2, y: y) }
+        return above
+    }
+}
+
 struct TimelineSeries {
     let name: String
     let color: Color
@@ -975,15 +995,26 @@ struct TimelineSeries {
     let bins: [TimelineBin]
 }
 
-/// A column chart with hover details; several series sit side by side in each slot.
+/// A column chart with hover details; several series sit side by side in each slot. The hovered bar brightens,
+/// and its details sit above it, or beside it when it's too tall, never over it.
 private struct TimelineChart: View {
     let series: [TimelineSeries]
     /// What each bar counts, singular and plural.
     var noun = ("mention", "mentions")
+    /// Called with a slot's index when it's clicked; a chart without it can't be clicked.
+    var onSelect: ((Int) -> Void)?
     @ViewState private var hovered: Int?
+    @ViewState private var tooltipSize = CGSize(width: 180, height: 40)
 
     private let axisWidth: CGFloat = 36
     private let axisHeight: CGFloat = 24
+
+    private struct Bar: Identifiable {
+        let id: String
+        let slot: Int
+        let rect: CGRect
+        let color: Color
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -992,6 +1023,7 @@ private struct TimelineChart: View {
                               height: max(proxy.size.height - axisHeight - 10, 1))
             let ticks = Self.ticks(maximum: series.flatMap { $0.bins.map(\.count) }.max() ?? 1)
             let top = CGFloat(ticks.last ?? 1)
+            let bars = self.bars(plot: plot, top: top)
 
             ZStack(alignment: .topLeading) {
                 Canvas { context, _ in
@@ -1002,25 +1034,23 @@ private struct TimelineChart: View {
                         line.addLine(to: CGPoint(x: plot.maxX, y: y))
                         context.stroke(line, with: .color(Theme.line), lineWidth: 1)
                     }
-                    let slot = plot.width / CGFloat(bins.count)
                     if let hovered {
+                        let slot = plot.width / CGFloat(bins.count)
                         let band = CGRect(x: plot.minX + slot * CGFloat(hovered), y: plot.minY,
                                           width: slot, height: plot.height)
                         context.fill(Path(band), with: .color(.primary.opacity(0.06)))
                     }
-                    let group = max(min(24 * CGFloat(series.count), slot - 2), 1)
-                    let width = group / CGFloat(max(series.count, 1))
-                    for (item, line) in series.enumerated() {
-                        for (index, bin) in line.bins.enumerated() where bin.count > 0 {
-                            let height = max(plot.height * CGFloat(bin.count) / top, 2)
-                            let rect = CGRect(x: plot.minX + slot * CGFloat(index) + (slot - group) / 2 + width * CGFloat(item),
-                                              y: plot.maxY - height, width: max(width - (series.count > 1 ? 1 : 0), 1),
-                                              height: height)
-                            let radius = min(4, rect.width / 2, height)
-                            let bar = UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius).path(in: rect)
-                            context.fill(bar, with: .color(line.color))
-                        }
-                    }
+                }
+
+                ForEach(bars) { bar in
+                    let radius = min(4, bar.rect.width / 2, bar.rect.height)
+                    UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius)
+                        .fill(bar.color)
+                        .brightness(hovered == bar.slot ? 0.12 : 0)
+                        .animation(.easeInOut(duration: 0.18), value: hovered == bar.slot)
+                        .frame(width: bar.rect.width, height: bar.rect.height)
+                        .position(x: bar.rect.midX, y: bar.rect.midY)
+                        .allowsHitTesting(false)
                 }
 
                 ForEach(ticks, id: \.self) { tick in
@@ -1043,7 +1073,9 @@ private struct TimelineChart: View {
 
                 if let hovered, bins.indices.contains(hovered) {
                     tooltip(hovered)
-                        .position(x: min(max(center(hovered, plot), plot.minX + 90), plot.maxX - 90), y: plot.minY + 24)
+                        .fixedSize()
+                        .onGeometryChange(for: CGSize.self) { $0.size } action: { tooltipSize = $0 }
+                        .position(tooltipSpot(hovered, bars: bars, plot: plot, bounds: proxy.size))
                         .allowsHitTesting(false)
                 }
             }
@@ -1051,15 +1083,15 @@ private struct TimelineChart: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let point):
-                    guard plot.contains(CGPoint(x: point.x, y: min(point.y, plot.maxY - 1))) else {
-                        hovered = nil
-                        return
-                    }
-                    let slot = plot.width / CGFloat(bins.count)
-                    hovered = min(Int((point.x - plot.minX) / slot), bins.count - 1)
+                    hovered = slot(at: point, plot: plot)
                 case .ended:
                     hovered = nil
                 }
+            }
+            .pointerStyle(onSelect != nil && hovered.map(isSelectable) == true ? .link : nil)
+            .onTapGesture { point in
+                guard let onSelect, let index = slot(at: point, plot: plot), isSelectable(index) else { return }
+                onSelect(index)
             }
         }
         .accessibilityElement()
@@ -1068,6 +1100,40 @@ private struct TimelineChart: View {
         .accessibilityValue(series.map { line in
             line.name + ": " + line.bins.filter { $0.count > 0 }.map { "\($0.label): \($0.count)" }.joined(separator: ", ")
         }.joined(separator: "; "))
+    }
+
+    private func slot(at point: CGPoint, plot: CGRect) -> Int? {
+        guard !bins.isEmpty, plot.contains(CGPoint(x: point.x, y: min(point.y, plot.maxY - 1))) else { return nil }
+        return min(Int((point.x - plot.minX) / (plot.width / CGFloat(bins.count))), bins.count - 1)
+    }
+
+    private func isSelectable(_ index: Int) -> Bool {
+        onSelect != nil && bins.indices.contains(index) && bins[index].count > 0
+    }
+
+    private func bars(plot: CGRect, top: CGFloat) -> [Bar] {
+        let slot = plot.width / CGFloat(max(bins.count, 1))
+        let group = max(min(24 * CGFloat(series.count), slot - 2), 1)
+        let width = group / CGFloat(max(series.count, 1))
+        var bars: [Bar] = []
+        for (item, line) in series.enumerated() {
+            for (index, bin) in line.bins.enumerated() where bin.count > 0 {
+                let height = max(plot.height * CGFloat(bin.count) / top, 2)
+                let rect = CGRect(x: plot.minX + slot * CGFloat(index) + (slot - group) / 2 + width * CGFloat(item),
+                                  y: plot.maxY - height, width: max(width - (series.count > 1 ? 1 : 0), 1),
+                                  height: height)
+                bars.append(Bar(id: "\(item)-\(index)", slot: index, rect: rect, color: line.color))
+            }
+        }
+        return bars
+    }
+
+    private func tooltipSpot(_ index: Int, bars: [Bar], plot: CGRect, bounds: CGSize) -> CGPoint {
+        let slot = plot.width / CGFloat(bins.count)
+        let own = bars.filter { $0.slot == index }.map(\.rect)
+        let bar = own.dropFirst().reduce(own.first ?? CGRect(x: plot.minX + slot * CGFloat(index), y: plot.maxY,
+                                                              width: slot, height: 0)) { $0.union($1) }
+        return ChartTooltip.spot(size: tooltipSize, bar: bar, plot: plot, bounds: bounds)
     }
 
     private var names: String { series.map(\.name).joined(separator: ", ") }
@@ -1081,6 +1147,11 @@ private struct TimelineChart: View {
                 Text("\(bin.count) \(bin.count == 1 ? noun.0 : noun.1) · \(bin.pageCount) \(bin.pageCount == 1 ? "page" : "pages")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if isSelectable(index) {
+                    Text("Click to show \(bin.count == 1 ? "it" : "them")")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             } else {
                 ForEach(series.indices, id: \.self) { item in
                     HStack(spacing: 5) {

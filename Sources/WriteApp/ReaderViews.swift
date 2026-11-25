@@ -302,7 +302,7 @@ private struct PageColumn: View {
             Text("The photo and text will be permanently removed.")
         }
         .confirmationDialog("Read page \(page.number) again?", isPresented: $confirmReread, titleVisibility: .visible) {
-            Button("Read Again") { model.readAgain(page.id) }
+            Button("Read Again with Claude") { model.readAgain(page.id) }
         } message: {
             Text("The photo is sent to Anthropic again, and the new text replaces the current text, including your edits.")
         }
@@ -321,16 +321,17 @@ private struct PageColumn: View {
                 PeopleButton(page: page)
             }
             if page.status != .done && page.status != .reading {
-                Button("Read Page") { model.readAgain(page.id) }
+                Button("Read with Claude") { model.readAgain(page.id) }
                     .controlSize(.small)
                     .disabled(!model.hasAPIKey)
+                    .help("Send the photo to Claude to read")
             }
             if page.status != .reading {
                 if model.hasLocalProgress(page.id) {
                     Button("Resume on This Mac") { model.readOnThisMac(page.id) }
                         .controlSize(.small)
                         .help("Pick up the reading on this Mac where it stopped")
-                } else {
+                } else if page.status != .done {
                     Button("Read on This Mac") { model.readOnThisMac(page.id) }
                         .controlSize(.small)
                         .help("Read this page with the decision model on this Mac, and watch it work")
@@ -341,8 +342,11 @@ private struct PageColumn: View {
             }
             Menu {
                 if page.status == .done {
-                    Button("Read Again…") { confirmReread = true }
+                    Button("Read Again with Claude…") { confirmReread = true }
                         .disabled(!model.hasAPIKey)
+                    if !model.hasLocalProgress(page.id) {
+                        Button("Read Again on This Mac") { model.readOnThisMac(page.id) }
+                    }
                 }
                 if model.hasLocalProgress(page.id) && page.status != .reading {
                     Button("Start Reading on This Mac Over") { model.readOnThisMac(page.id, startOver: true) }

@@ -178,6 +178,8 @@ public struct TimelineBin: Identifiable, Hashable, Sendable {
     public let shortLabel: String
     public let count: Int
     public let pageCount: Int
+    /// The entries counted in this bin, by `JournalEntry.id`; only charts of entries fill it in.
+    public var entryIDs: [String] = []
 }
 
 /// A running figure as it stood at the end of one month or week, counting only entries dated up to then.
@@ -534,17 +536,17 @@ public struct AnalysisSnapshot: Sendable {
         }
 
         func bins(index: (Int) -> Int, count: Int, label: (Int) -> (full: String, short: String)) -> [TimelineBin] {
-            var entries = [Int](repeating: 0, count: count)
+            var entries = [[String]](repeating: [], count: count)
             var binPages = [Set<UUID>](repeating: [], count: count)
             for item in dated {
                 let bin = index(item.day)
-                entries[bin] += 1
+                entries[bin].append(item.entry)
                 binPages[bin].formUnion(pages[item.entry] ?? [])
             }
             return (0..<count).map { bin in
                 let names = label(bin)
-                return TimelineBin(id: bin, label: names.full, shortLabel: names.short, count: entries[bin],
-                                   pageCount: binPages[bin].count)
+                return TimelineBin(id: bin, label: names.full, shortLabel: names.short, count: entries[bin].count,
+                                   pageCount: binPages[bin].count, entryIDs: entries[bin])
             }
         }
 

@@ -3,6 +3,12 @@ import CoreGraphics
 import SwiftUI
 import WriteCore
 
+/// A set of entries picked from Analysis, with what to call it above the list.
+public struct EntryFilter: Equatable {
+    public let label: String
+    public let entryIDs: Set<String>
+}
+
 public enum LibraryMode: String, CaseIterable, Identifiable {
     case pages
     case entries
@@ -61,6 +67,8 @@ public final class AppModel: ObservableObject {
     }
     /// Shows only starred entries, from every journal.
     @Published public var showsStarredOnly = false
+    /// Entries chosen from a chart in Analysis, such as one week's, shown instead of the journal's.
+    @Published public var entryFilter: EntryFilter?
     @Published public private(set) var starredEntries: [StarredEntry] = [] {
         didSet { starredIDs = Set(starredEntries.map(\.id)) }
     }
@@ -322,6 +330,7 @@ public final class AppModel: ObservableObject {
         entryWordCounts = [:]
         starredEntries = []
         showsStarredOnly = false
+        entryFilter = nil
         selectedJournalID = nil
         selectedPageID = nil
         selectedEntryID = nil
@@ -445,6 +454,7 @@ public final class AppModel: ObservableObject {
 
     public func selectJournal(_ id: UUID) {
         showingAnalysis = false
+        entryFilter = nil
         guard selectedJournalID != id else { return }
         selectedJournalID = id
         if selectedPage?.journalID != id { selectedPageID = nil }
@@ -470,7 +480,10 @@ public final class AppModel: ObservableObject {
     /// journal, in the chosen order.
     public var visibleEntries: [JournalEntry] {
         var list: [JournalEntry]
-        if isSearching {
+        if let entryFilter {
+            list = entries.filter { entryFilter.entryIDs.contains($0.id) }
+            if isSearching { list = list.filter { matchesSearch($0.bodyText) || matchesSearch($0.heading ?? "") } }
+        } else if isSearching {
             list = entries.filter { matchesSearch($0.bodyText) || matchesSearch($0.heading ?? "") }
         } else if showsStarredOnly {
             list = entries
@@ -479,6 +492,19 @@ public final class AppModel: ObservableObject {
         }
         if showsStarredOnly { list = list.filter(isStarred) }
         return entrySort.sorted(list, ascending: entrySortAscending) { self.wordCount(of: $0) }
+    }
+
+    /// Opens the entries list showing just these entries, as when a week is clicked in Analysis.
+    public func showEntries(_ ids: [String], label: String) {
+        guard !ids.isEmpty else { return }
+        flushEdits()
+        searchText = ""
+        showsStarredOnly = false
+        entryFilter = EntryFilter(label: label, entryIDs: Set(ids))
+        libraryMode = .entries
+        showingAnalysis = false
+        selectedEntryID = visibleEntries.first?.id
+        if let entry = selectedEntry { selectedJournalID = entry.journalID }
     }
 
     public func wordCount(of entry: JournalEntry) -> Int {

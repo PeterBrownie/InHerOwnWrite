@@ -107,11 +107,13 @@ page. A page that can't be read keeps its photo and can be retried.
   month or per week, averages both over the whole span from the first dated entry to the last, and shows
   the longest gap between two entries, the longest and current streaks of days in a row, and which days of
   the week have the most entries. From the times written in date headings, it shows the usual time of
-  writing and a chart of entries by time of day.
+  writing and a chart of entries by time of day. Click a month or week in the entries chart to list just
+  its entries; clear the label above the list, or pick a journal, to see them all again.
 
 ## Reading on this Mac (experimental)
 
-Choose **This Mac** under **Read with** when adding a page, or click **Read on This Mac** under any page. The
+Choose **This Mac** under **Read with** when adding a page, or click **Read on This Mac** under a page that
+hasn't been read. For a page that's already read, it's **Read Again on This Mac** in the page's **⋯** menu. The
 page is read without leaving the Mac, and the **Reading on This Mac** window (⌥⌘R) shows the work live.
 
 1. The page is straightened, and Apple's Vision framework, built into macOS, reads it in overlapping strips
