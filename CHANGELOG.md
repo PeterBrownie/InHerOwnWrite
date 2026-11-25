@@ -6,6 +6,12 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 37 (November 24, 2026)
+
+- **Crop edges no longer get stuck after straightening.** When a page is turned with **Straighten**, you can
+  keep dragging an edge or corner of the crop outward; the turn eases toward level just enough to make room,
+  and the Straighten slider follows. Drag back in before letting go to get the turn back.
+
 ## Build 36 (November 24, 2026)
 
 - **See how your averages changed.** In Analysis, click **Average per month**, **Average per week**, or

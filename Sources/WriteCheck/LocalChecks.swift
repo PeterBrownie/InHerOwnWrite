@@ -855,6 +855,35 @@ func runTiltedCropChecks() throws {
     let corner = TiltedCrop.fitted(CGRect(x: 0.75, y: 0.75, width: 0.3, height: 0.3), degrees: -9, aspect: aspect)
     check("a frame past the edge is moved back inside", TiltedCrop.fits(corner, degrees: -9, aspect: aspect)
           && abs(corner.width - 0.3) < 1e-9)
+
+    // Dragging an edge of a turned frame out past where it fits eases the turn just enough to make room.
+    let near = TiltedCrop.fitted(whole, degrees: 8, aspect: aspect)
+    let inward = TiltedCrop.resizedMakingRoom(near, edges: .right, dx: -0.1, dy: 0, degrees: 8, aspect: aspect)
+    check("dragging an edge in keeps the turn", inward.degrees == 8 && inward.crop.width < near.width)
+    let outward = TiltedCrop.resizedMakingRoom(near, edges: .right, dx: 0.06, dy: 0, degrees: 8, aspect: aspect)
+    let wanted = TiltedCrop.resized(near, edges: .right, dx: 0.06, dy: 0, degrees: outward.degrees, aspect: aspect)
+    check("dragging an edge out past the photo's room eases the turn instead of stopping",
+          outward.degrees < 8 && outward.degrees > 0 && abs(outward.crop.width - wanted.width) < 1e-9
+          && outward.crop.width > near.width + 0.03)
+    check("the eased frame fits the photo at its new turn",
+          TiltedCrop.fits(outward.crop, degrees: outward.degrees, aspect: aspect))
+    let tighter = TiltedCrop.resizedMakingRoom(near, edges: .right, dx: 0.03, dy: 0, degrees: 8, aspect: aspect)
+    check("a shorter drag eases the turn less", tighter.degrees > outward.degrees)
+    check("the turn is eased only as much as needed", !TiltedCrop.fits(
+        TiltedCrop.resized(near, edges: .right, dx: 0.06, dy: 0, degrees: outward.degrees + 0.2, aspect: aspect),
+        degrees: outward.degrees + 0.2, aspect: aspect))
+    let negative = TiltedCrop.fitted(whole, degrees: -6, aspect: aspect)
+    let left = TiltedCrop.resizedMakingRoom(negative, edges: [.top, .left], dx: -0.05, dy: -0.05, degrees: -6,
+                                            aspect: aspect)
+    check("a corner dragged out eases a counterclockwise turn toward level too",
+          left.degrees > -6 && left.degrees <= 0 && TiltedCrop.fits(left.crop, degrees: left.degrees, aspect: aspect))
+    let far = TiltedCrop.resizedMakingRoom(near, edges: .right, dx: 2, dy: 0, degrees: 8, aspect: aspect)
+    check("a drag past the photo stops at its edge, level",
+          far.degrees == 0 && abs(far.crop.maxX - 1) < 1e-4 && TiltedCrop.fits(far.crop, degrees: 0, aspect: aspect))
+    let opposite = TiltedCrop.corners(near, degrees: 8, aspect: aspect)
+    let after = TiltedCrop.corners(tighter.crop, degrees: tighter.degrees, aspect: aspect)
+    check("the opposite side stays about where it was",
+          hypot((opposite[0].x - after[0].x) * aspect, opposite[0].y - after[0].y) < 0.03)
 }
 
 /// Where the dark pixels of an image sit, as fractions of its width and height from the top left.

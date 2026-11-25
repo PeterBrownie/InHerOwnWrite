@@ -624,7 +624,7 @@ func runRender(output: URL, sample: URL?) async throws {
     let spreadScan = await PageScan.analyze(jpeg: spread)
     await render(CropEditor(image: NSImage(data: spread)!, crop: .constant(spreadScan.crop)).padding(10),
                  size: CGSize(width: 520, height: 460), to: output.appendingPathComponent("4c-crop.png"))
-    await render(CropEditor(image: NSImage(data: spread)!, crop: .constant(spreadScan.crop), angle: 6).padding(10),
+    await render(CropEditor(image: NSImage(data: spread)!, crop: .constant(spreadScan.crop), angle: .constant(6)).padding(10),
                  size: CGSize(width: 520, height: 460), to: output.appendingPathComponent("4c-crop-turned.png"))
     _ = model.createJournal(name: "Spread Test")
     await render(UploadSheet(preloaded: spread).environmentObject(model), size: CGSize(width: 820, height: 600),
@@ -633,7 +633,7 @@ func runRender(output: URL, sample: URL?) async throws {
     UserDefaults.standard.set(true, forKey: "bothPages")
     let sideways = try PagePhoto.rotated(openJournal(), degrees: 90)
     await render(CropEditor(image: NSImage(data: openJournal())!, crop: .constant(CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)),
-                            angle: 3, split: .constant(0.52)).padding(10),
+                            angle: .constant(3), split: .constant(0.52)).padding(10),
                  size: CGSize(width: 520, height: 460), to: output.appendingPathComponent("4e-crop-both-pages.png"))
     await render(UploadSheet(preloaded: sideways).environmentObject(model), size: CGSize(width: 820, height: 600),
                  to: output.appendingPathComponent("4f-upload-both-pages.png"), wait: 4)

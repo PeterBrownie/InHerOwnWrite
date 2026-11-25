@@ -152,7 +152,7 @@ public struct UploadSheet: View {
                         }
                         .padding(10)
                     } else {
-                        CropEditor(image: turned ?? preview, crop: $crop, angle: straighten, split: bothPages ? $split : nil)
+                        CropEditor(image: turned ?? preview, crop: $crop, angle: $straighten, split: bothPages ? $split : nil)
                             .padding(10)
                     }
                 } else if isPreparing {
@@ -792,24 +792,28 @@ public struct UploadSheet: View {
 
 /// The photo with the part to keep left bright and everything else darkened. Drag an edge or corner to
 /// adjust it, or drag inside to move it. With a straightening angle, the photo stays still and the frame
-/// turns over it, so the slider costs nothing to drag; edges then move along the frame's own sides.
+/// turns over it, so the slider costs nothing to drag; edges then move along the frame's own sides. Dragging
+/// an edge out past where the turned frame fits eases the turn toward level just enough to make room.
 /// For a photo of both pages, a line across the frame marks the fold; drag it to move the split.
 public struct CropEditor: View {
     let image: NSImage
     @Binding var crop: CGRect
     /// The clockwise turn, in degrees, that will level the page. The frame is drawn turned the other way.
-    let angle: Double
+    @Binding var angle: Double
     /// Where the fold divides the frame, as a fraction of its width; nil for a single page.
     let split: Binding<Double>?
 
-    public init(image: NSImage, crop: Binding<CGRect>, angle: Double = 0, split: Binding<Double>? = nil) {
+    public init(image: NSImage, crop: Binding<CGRect>, angle: Binding<Double> = .constant(0),
+                split: Binding<Double>? = nil) {
         self.image = image
         _crop = crop
-        self.angle = angle
+        _angle = angle
         self.split = split
     }
 
     @ViewState private var dragStart: CGRect?
+    /// The turn when the drag began; an edge drag may ease it to make room, and gives it back if dragged in.
+    @ViewState private var angleStart: Double?
     @ViewState private var splitStart: Double?
 
     /// The middle comes first so the edge and corner handles sit above it and get their drags.
@@ -932,20 +936,24 @@ public struct CropEditor: View {
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    let start = dragStart ?? TiltedCrop.fitted(crop, degrees: angle, aspect: aspect)
+                    let turn = angleStart ?? angle
+                    if angleStart == nil { angleStart = turn }
+                    let start = dragStart ?? TiltedCrop.fitted(crop, degrees: turn, aspect: aspect)
                     if dragStart == nil { dragStart = start }
                     // In units of the photo's height, the same along both axes.
                     let unit = max(frame.height, 1)
                     if let split, handle != .middle, splitStart == nil { splitStart = split.wrappedValue }
-                    let moved = adjusted(start, handle: handle,
-                                         dx: value.translation.width / unit, dy: value.translation.height / unit)
+                    let (moved, eased) = adjusted(start, handle: handle, angle: turn,
+                                                  dx: value.translation.width / unit, dy: value.translation.height / unit)
                     crop = moved
+                    if eased != angle { angle = eased }
                     if let split, let splitStart, handle != .middle {
-                        split.wrappedValue = keptFold(splitStart, from: start, to: moved)
+                        split.wrappedValue = keptFold(splitStart, from: start, to: moved, angle: eased)
                     }
                 }
                 .onEnded { _ in
                     dragStart = nil
+                    angleStart = nil
                     splitStart = nil
                 }
         )
@@ -957,8 +965,8 @@ public struct CropEditor: View {
     }
 
     /// The split that keeps the fold line where it was on the photo when an edge moves the frame from
-    /// `start` to `moved`, both at the same angle.
-    private func keptFold(_ fraction: Double, from start: CGRect, to moved: CGRect) -> Double {
+    /// `start` to `moved`, both at `angle`.
+    private func keptFold(_ fraction: Double, from start: CGRect, to moved: CGRect, angle: Double) -> Double {
         let radians = angle * .pi / 180
         // How far the frame's middle moved along its own width, in units of the photo's height.
         let dx = (moved.midX - start.midX) * aspect, dy = moved.midY - start.midY
@@ -999,47 +1007,26 @@ public struct CropEditor: View {
         }
     }
 
-    /// Moves the dragged edges along the frame's own sides, keeping the frame inside the photo at its angle and
-    /// at least a tenth of the photo in each direction. `dx` and `dy` are in units of the photo's height.
-    private func adjusted(_ start: CGRect, handle: Handle, dx: Double, dy: Double) -> CGRect {
-        let aspect = aspect
-        func moved(_ fraction: Double) -> CGRect {
-            let dx = dx * fraction, dy = dy * fraction
-            if handle == .middle {
-                return start.offsetBy(dx: dx / aspect, dy: dy)
-            }
-            // The drag in the frame's own directions: the frame is turned counterclockwise by `angle`.
-            let radians = angle * .pi / 180
-            let along = dx * cos(radians) - dy * sin(radians)
-            let across = dx * sin(radians) + dy * cos(radians)
-            var left = -start.width * aspect / 2, right = start.width * aspect / 2
-            var top = -start.height / 2, bottom = start.height / 2
-            let smallestWidth = 0.1 * aspect, smallestHeight = 0.1
-            if [.topLeft, .left, .bottomLeft].contains(handle) { left = min(left + along, right - smallestWidth) }
-            if [.topRight, .right, .bottomRight].contains(handle) { right = max(right + along, left + smallestWidth) }
-            if [.topLeft, .top, .topRight].contains(handle) { top = min(top + across, bottom - smallestHeight) }
-            if [.bottomLeft, .bottom, .bottomRight].contains(handle) { bottom = max(bottom + across, top + smallestHeight) }
-            // The frame's new middle, turned back onto the photo.
-            let shiftX = (left + right) / 2, shiftY = (top + bottom) / 2
-            let centerX = start.midX * aspect + shiftX * cos(-radians) - shiftY * sin(-radians)
-            let centerY = start.midY + shiftX * sin(-radians) + shiftY * cos(-radians)
-            let width = right - left, height = bottom - top
-            return CGRect(x: (centerX - width / 2) / aspect, y: centerY - height / 2,
-                          width: width / aspect, height: height)
+    /// Moves the dragged edges along the frame's own sides, or the whole frame for the middle, keeping it inside
+    /// the photo. An edge dragged past where the frame fits at `angle` eases the turn toward level to make room;
+    /// returns the frame and its turn. `dx` and `dy` are in units of the photo's height.
+    private func adjusted(_ start: CGRect, handle: Handle, angle: Double, dx: Double, dy: Double) -> (CGRect, Double) {
+        var edges: TiltedCrop.Edges = []
+        switch handle {
+        case .middle:
+            // Moving keeps the size and the turn; it stops at the photo's edges.
+            return (TiltedCrop.fitted(start.offsetBy(dx: dx / aspect, dy: dy), degrees: angle, aspect: aspect), angle)
+        case .topLeft: edges = [.top, .left]
+        case .top: edges = .top
+        case .topRight: edges = [.top, .right]
+        case .right: edges = .right
+        case .bottomRight: edges = [.bottom, .right]
+        case .bottom: edges = .bottom
+        case .bottomLeft: edges = [.bottom, .left]
+        case .left: edges = .left
         }
-        if handle == .middle {
-            // Moving keeps the size; it stops at the photo's edges.
-            let target = moved(1)
-            return TiltedCrop.fitted(target, degrees: angle, aspect: aspect)
-        }
-        if TiltedCrop.fits(moved(1), degrees: angle, aspect: aspect) { return moved(1) }
-        // As far along the drag as still fits.
-        var low = 0.0, high = 1.0
-        for _ in 0..<20 {
-            let middle = (low + high) / 2
-            if TiltedCrop.fits(moved(middle), degrees: angle, aspect: aspect) { low = middle } else { high = middle }
-        }
-        return TiltedCrop.fits(moved(low), degrees: angle, aspect: aspect) ? moved(low) : start
+        let result = TiltedCrop.resizedMakingRoom(start, edges: edges, dx: dx, dy: dy, degrees: angle, aspect: aspect)
+        return (result.crop, result.degrees)
     }
 }
 

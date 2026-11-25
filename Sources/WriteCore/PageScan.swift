@@ -725,6 +725,82 @@ public enum TiltedCrop {
                       width: 2 * halfWidth / aspect, height: 2 * halfHeight)
     }
 
+    /// Which sides of the frame a drag moves.
+    public struct Edges: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let left = Edges(rawValue: 1), right = Edges(rawValue: 2)
+        public static let top = Edges(rawValue: 4), bottom = Edges(rawValue: 8)
+    }
+
+    /// The frame with `edges` moved along its own sides by a drag of (`dx`, `dy`) on the photo, in units of the
+    /// photo's height, with the frame turned by `degrees`. The other sides stay put, and the frame keeps at
+    /// least a tenth of the photo in each direction. It may reach past the photo; see `fits`.
+    public static func resized(_ start: CGRect, edges: Edges, dx: Double, dy: Double, degrees: Double,
+                               aspect: Double) -> CGRect {
+        // The drag in the frame's own directions: the frame is turned counterclockwise by `degrees`.
+        let radians = degrees * .pi / 180
+        let along = dx * cos(radians) - dy * sin(radians)
+        let across = dx * sin(radians) + dy * cos(radians)
+        var left = -start.width * aspect / 2, right = start.width * aspect / 2
+        var top = -start.height / 2, bottom = start.height / 2
+        let smallestWidth = 0.1 * aspect, smallestHeight = 0.1
+        if edges.contains(.left) { left = min(left + along, right - smallestWidth) }
+        if edges.contains(.right) { right = max(right + along, left + smallestWidth) }
+        if edges.contains(.top) { top = min(top + across, bottom - smallestHeight) }
+        if edges.contains(.bottom) { bottom = max(bottom + across, top + smallestHeight) }
+        // The frame's new middle, turned back onto the photo.
+        let shiftX = (left + right) / 2, shiftY = (top + bottom) / 2
+        let centerX = start.midX * aspect + shiftX * cos(radians) + shiftY * sin(radians)
+        let centerY = start.midY - shiftX * sin(radians) + shiftY * cos(radians)
+        let width = right - left, height = bottom - top
+        return CGRect(x: (centerX - width / 2) / aspect, y: centerY - height / 2, width: width / aspect, height: height)
+    }
+
+    /// Resizes the frame as far as the drag goes. When the turned frame would reach past the photo, the turn is
+    /// eased toward level, only as much as it takes to make room (a level frame has the most). A drag past the
+    /// photo itself stops at its edge, level there. Returns the frame and the turn it fits at.
+    public static func resizedMakingRoom(_ start: CGRect, edges: Edges, dx: Double, dy: Double, degrees: Double,
+                                         aspect: Double) -> (crop: CGRect, degrees: Double) {
+        func frame(_ fraction: Double, _ angle: Double) -> CGRect {
+            resized(start, edges: edges, dx: dx * fraction, dy: dy * fraction, degrees: angle, aspect: aspect)
+        }
+        let whole = frame(1, degrees)
+        if fits(whole, degrees: degrees, aspect: aspect) { return (whole, degrees) }
+        // How much of the drag fits at all: all of it if it fits level, or else up to the photo's edge.
+        var reach = 1.0
+        if !fits(frame(1, 0), degrees: 0, aspect: aspect) {
+            var low = 0.0, high = 1.0
+            for _ in 0..<24 {
+                let middle = (low + high) / 2
+                if fits(frame(middle, 0), degrees: 0, aspect: aspect) { low = middle } else { high = middle }
+            }
+            reach = low
+        }
+        guard reach > 0, fits(frame(reach, 0), degrees: 0, aspect: aspect) else {
+            // Not even level makes room (a long, thin frame): go as far as fits at this turn.
+            var low = 0.0, high = 1.0
+            for _ in 0..<24 {
+                let middle = (low + high) / 2
+                if fits(frame(middle, degrees), degrees: degrees, aspect: aspect) { low = middle } else { high = middle }
+            }
+            let kept = frame(low, degrees)
+            return (fits(kept, degrees: degrees, aspect: aspect) ? kept : start, degrees)
+        }
+        // The turn nearest the one asked for at which that much of the drag fits.
+        // Fractions of the turn kept: none (level) fits, all of it doesn't.
+        var fitting = 0.0, tooMuch = 1.0
+        for _ in 0..<24 {
+            let middle = (fitting + tooMuch) / 2
+            if fits(frame(reach, degrees * middle), degrees: degrees * middle, aspect: aspect) { fitting = middle }
+            else { tooMuch = middle }
+        }
+        // To a tenth of a degree, rounded toward level, when that still fits.
+        let rounded = (degrees * fitting * 10).rounded(.towardZero) / 10
+        let angle = fits(frame(reach, rounded), degrees: rounded, aspect: aspect) ? rounded : degrees * fitting
+        return (frame(reach, angle), angle)
+    }
+
     /// The reverse of `canvasCrop`: an upright crop of the photo turned clockwise by `degrees`, as a frame
     /// over the still photo.
     public static func photoCrop(_ canvas: CGRect, degrees: Double, aspect: Double) -> CGRect {

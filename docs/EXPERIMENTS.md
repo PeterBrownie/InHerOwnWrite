@@ -121,6 +121,10 @@ read each line more than once, and their differences become options for the mode
   and the frame shrinks or moves to stay inside the photo at its angle. The photo is turned and cut once,
   when the page is saved or Result is shown (after the slider rests for a quarter second). Quarter turns
   still turn the photo, so a sideways page is shown upright.
+  Shrinking to fit had a cost: once turned, the frame often sat against the photo's edges and couldn't be
+  dragged back out. Now an edge dragged past where the turned frame fits eases the turn toward level, only as
+  much as that drag needs (to a tenth of a degree), since a level frame has the most room. Dragging back in
+  during the same drag gives the turn back; past the photo itself, the edge stops there, level.
 - **Flattening curl:** the page is measured in 14 vertical bands and up to 5 rows; each band's row profile
   is lined up with its neighbor's to find how far lines drift, a smooth curve is fitted per row (dropping
   outliers, such as bands catching the page edge), and each column is shifted up or down. On an invented
@@ -285,7 +289,7 @@ Not started. Listed so they aren't forgotten.
 
 ## Known issues
 
-- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame, removing
+- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), removing
   and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink
   tint, adding both pages from one photo, and dropping several photos at once. They pass
   `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked
