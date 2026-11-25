@@ -192,6 +192,12 @@ private struct LibraryColumn: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
 
+            if model.libraryMode == .entries {
+                EntryListControls()
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+            }
+
             switch model.libraryMode {
             case .pages: PageList(isSearching: isSearching)
             case .entries: EntryList(isSearching: isSearching)
@@ -233,22 +239,95 @@ private struct PageList: View {
     }
 }
 
+/// Sorting the entries, and showing only starred ones.
+private struct EntryListControls: View {
+    @EnvironmentObject private var model: AppModel
+
+    private func label(_ sort: EntrySort) -> String {
+        sort == .date ? "Date" : "Length"
+    }
+
+    private func direction(_ sort: EntrySort, ascending: Bool) -> String {
+        switch sort {
+        case .date: return ascending ? "Oldest First" : "Newest First"
+        case .length: return ascending ? "Shortest First" : "Longest First"
+        }
+    }
+
+    var body: some View {
+        HStack {
+            Menu {
+                Picker("Sort By", selection: $model.entrySort) {
+                    ForEach(EntrySort.allCases) { Text(label($0)).tag($0) }
+                }
+                .pickerStyle(.inline)
+                Picker("Order", selection: $model.entrySortAscending) {
+                    Text(direction(model.entrySort, ascending: true)).tag(true)
+                    Text(direction(model.entrySort, ascending: false)).tag(false)
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label("\(label(model.entrySort)), \(direction(model.entrySort, ascending: model.entrySortAscending))",
+                      systemImage: "arrow.up.arrow.down")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Sort entries")
+
+            Spacer()
+
+            Toggle(isOn: $model.showsStarredOnly) {
+                Label("Starred", systemImage: model.showsStarredOnly ? "star.fill" : "star")
+            }
+            .toggleStyle(.button)
+            .help(model.showsStarredOnly ? "Show all entries" : "Show only starred entries, from every journal")
+        }
+        .font(.callout)
+        .controlSize(.small)
+    }
+}
+
 private struct EntryList: View {
     @EnvironmentObject private var model: AppModel
     let isSearching: Bool
 
     var body: some View {
         if model.visibleEntries.isEmpty {
-            ContentUnavailableView {
-                Label(isSearching ? "No matches" : "No entries yet",
-                      systemImage: isSearching ? "magnifyingglass" : "calendar")
-            } description: {
-                Text(isSearching ? "Nothing in your entries matches that." : "Entries appear once pages have been read.")
+            if model.showsStarredOnly {
+                ContentUnavailableView {
+                    Label(isSearching ? "No matches" : "No starred entries", systemImage: "star")
+                } description: {
+                    Text(isSearching ? "None of your starred entries matches that."
+                         : "Star an entry to keep it here. Starred entries from every journal are listed together.")
+                }
+            } else {
+                ContentUnavailableView {
+                    Label(isSearching ? "No matches" : "No entries yet",
+                          systemImage: isSearching ? "magnifyingglass" : "calendar")
+                } description: {
+                    Text(isSearching ? "Nothing in your entries matches that." : "Entries appear once pages have been read.")
+                }
             }
         } else {
             List(model.visibleEntries, selection: $model.selectedEntryID) { entry in
-                EntryRow(entry: entry, showJournal: isSearching).tag(entry.id)
+                EntryRow(entry: entry, showJournal: isSearching || (model.showsStarredOnly && model.journals.count > 1))
+                    .tag(entry.id)
             }
+        }
+    }
+}
+
+/// Merging a continued entry into the one before, or splitting a merged one again.
+private struct EntryJoinActions: View {
+    @EnvironmentObject private var model: AppModel
+    let entry: JournalEntry
+
+    var body: some View {
+        if model.canMergeWithPrevious(entry) {
+            Button("Merge with Previous Entry") { model.mergeWithPrevious(entry) }
+        }
+        ForEach(model.joinedParts(of: entry)) { part in
+            Button("Split at Page \(part.pageNumber)") { model.split(entry, at: part) }
         }
     }
 }
@@ -260,12 +339,36 @@ private struct EntryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(entry.title)
-                .fontWeight(.semibold)
-                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text(entry.title)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if model.isStarred(entry) {
+                    Image(systemName: "star.fill")
+                        .font(.caption)
+                        .foregroundStyle(.yellow)
+                        .help("Starred")
+                }
+                if model.canMergeWithPrevious(entry) || !model.joinedParts(of: entry).isEmpty {
+                    Menu {
+                        EntryJoinActions(entry: entry)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("More")
+                }
+            }
             HStack(spacing: 6) {
                 if let time = entry.timeLabel { Text(time) }
                 Text(entry.pageLabel)
+                if model.entrySort == .length {
+                    let words = model.wordCount(of: entry)
+                    Text("\(words) \(words == 1 ? "word" : "words")")
+                }
                 if showJournal { Text(model.journalName(entry.journalID)).lineLimit(1) }
             }
             .font(.caption)
@@ -276,6 +379,10 @@ private struct EntryRow: View {
                 .lineLimit(2)
         }
         .padding(.vertical, 3)
+        .contextMenu {
+            Button(model.isStarred(entry) ? "Remove Star" : "Star") { model.toggleStar(entry) }
+            EntryJoinActions(entry: entry)
+        }
     }
 }
 

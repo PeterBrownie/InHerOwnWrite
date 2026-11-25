@@ -86,6 +86,13 @@ page. A page that can't be read keeps its photo and can be retried.
   Editing a date line in the text updates the entry, or click **Change Date…** above an entry to pick a
   date and time; that rewrites the entry's date line, or adds one. A line that is only a time ("9:30 pm"),
   first on a page or after a blank line, starts a new entry on the same day as the one before.
+- **Sorting and stars.** Above the entries, sort by date or by length (in words), either way round. Star an
+  entry with the star beside its date, or right-click it in the list; **Starred** lists starred entries from
+  every journal together.
+- **Merging continued entries.** An entry continues onto the next page only when the page numbers follow on,
+  so after a skipped page (one torn out, say) the next page starts "Continued from an earlier page". Its
+  **⋯** button has **Merge with Previous Entry**, which joins it to the entry before; the merged entry's
+  **⋯** has **Split at Page N** to undo it.
 - **Color.** Settings has five colors for buttons, links, and charts: Clay (the original), Green, Blue,
   Plum, and Slate.
 - **Reading controls.** Show or hide the photo, show one page or two, and flip with ⌘[ and ⌘]. Accurate
@@ -145,7 +152,7 @@ process on 127.0.0.1 that stops when the app quits or locks.
 
 ## What is protected
 
-- Journal names, page numbers, photos, transcriptions, entry dates, names, hidden words, and the API key
+- Journal names, page numbers, photos, transcriptions, entry dates, names, hidden words, starred entries, and the API key
   are encrypted with AES-256-GCM before they reach the database.
 - The encryption key comes from the user's password through PBKDF2-HMAC-SHA256 with 2,000,000 iterations.
 - The app locks after 10 idle minutes, and when the Mac sleeps or the screen locks.

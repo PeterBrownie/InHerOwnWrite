@@ -71,6 +71,9 @@ public struct PageInfo: Identifiable, Hashable, Codable, Sendable {
     public var updatedAt: Date
     /// Missing on pages read before entries and names were added.
     public var structure: PageStructure? = nil
+    /// Set when she said the text at the top of this page continues the entry before it, even though the page
+    /// numbers skip (a ripped-out page, say). Missing on older pages.
+    public var followsOn: Bool? = nil
 
     public init(id: UUID, journalID: UUID, number: Int, status: ReadingStatus, problem: String?, wasCutOff: Bool,
                 createdAt: Date, updatedAt: Date, structure: PageStructure? = nil) {
@@ -91,6 +94,8 @@ private struct AppSettings: Codable {
     var hiddenWords: [String]?
     /// Set once every page photo saved before photos were kept as HEIC has been converted.
     var photosConverted: Bool?
+    /// Entries she starred, in the order she starred them.
+    var starredEntries: [StarredEntry]?
 }
 
 /// The encrypted journal database.
@@ -326,6 +331,14 @@ public final class Vault: @unchecked Sendable {
 
     public func setHiddenWords(_ words: Set<String>) throws {
         try updateSettings { $0.hiddenWords = words.sorted() }
+    }
+
+    public func starredEntries() throws -> [StarredEntry] {
+        try locked { try readSettings().starredEntries ?? [] }
+    }
+
+    public func setStarredEntries(_ stars: [StarredEntry]) throws {
+        try updateSettings { $0.starredEntries = stars }
     }
 
     private func updateSettings(_ change: (inout AppSettings) -> Void) throws {
@@ -640,6 +653,17 @@ public final class Vault: @unchecked Sendable {
         }
     }
 
+    /// Says whether the top of this page continues the previous page's last entry when the numbers skip.
+    public func setFollowsOn(pageID: UUID, _ followsOn: Bool) throws {
+        try locked {
+            var page = try page(id: pageID)
+            page.followsOn = followsOn ? true : nil
+            page.updatedAt = Date()
+            try database.run("UPDATE pages SET record = ? WHERE id = ?",
+                             [.blob(try sealRecord(page)), .text(Self.key(pageID))])
+        }
+    }
+
     public func movePage(id: UUID, toJournal journalID: UUID, number: Int) throws {
         guard (1...Self.maximumPageNumber).contains(number) else { throw VaultError.invalidPageNumber }
         try locked {
@@ -650,6 +674,7 @@ public final class Vault: @unchecked Sendable {
             if let holder = holders.first, holder != Self.key(id) { throw VaultError.duplicatePage }
             page.journalID = journalID
             page.number = number
+            page.followsOn = nil
             page.updatedAt = Date()
             try database.run("UPDATE pages SET slot = ?, record = ? WHERE id = ?",
                              [.blob(newSlot), .blob(try sealRecord(page)), .text(Self.key(id))])

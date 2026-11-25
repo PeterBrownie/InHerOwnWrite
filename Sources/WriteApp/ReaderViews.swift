@@ -467,6 +467,14 @@ struct EntryReader: View {
                         Text(entry.title)
                             .font(.system(size: 22, weight: .semibold, design: .serif))
                         Spacer()
+                        let starred = model.isStarred(entry)
+                        Button { model.toggleStar(entry) } label: {
+                            Label(starred ? "Starred" : "Star", systemImage: starred ? "star.fill" : "star")
+                                .foregroundStyle(starred ? Color.yellow : Color.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .labelStyle(.iconOnly)
+                        .help(starred ? "Remove the star" : "Star this entry")
                         Button("Change Date…") { isChangingDate = true }
                             .buttonStyle(.link)
                             .font(.callout)

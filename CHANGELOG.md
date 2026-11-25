@@ -6,6 +6,17 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 45 (November 25, 2026)
+
+- **Sort entries.** Above the entries list, sort by date or by length, oldest or newest first, shortest or
+  longest first. Sorting by length shows each entry's word count.
+- **Star entries.** Click the star beside an entry's date, or right-click it in the list, to star it. Turn on
+  **Starred** above the list to see starred entries from every journal. Stars stay with their entry when you
+  edit the page or change its date.
+- **Merge a continued entry with the one before.** When page numbers skip, the next page's first entry shows
+  as "Continued from an earlier page". Its **⋯** button now has **Merge with Previous Entry**; the merged
+  entry's **⋯** has **Split at Page N** to undo it.
+
 ## Build 43 (November 24, 2026)
 
 - **Page photos take about 40% less space.** New pages are saved as HEIC instead of JPEG, with no visible

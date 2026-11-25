@@ -274,13 +274,12 @@ Not started. Listed so they aren't forgotten.
   - words and pages written per month.
 
   Also suggested and not chosen: "on this day", entries from the same date in earlier years.
-- **Ripped-out pages.** Pages are sometimes torn out, so the notebook's printed page numbers skip. When the
-  page being viewed has a previous or next page whose number skips, show a small control that opens a
-  simple menu to say that one or more pages were ripped out there. It should stay quiet: nothing in the
-  journal marks a ripped page; she just sees the page numbers skip. Saying pages were ripped out also
-  matters for entries: an entry now continues onto the next page only when the numbers follow on
-  (`EntryBuilder`), so a ripped page cuts an entry in two and its second half shows as "Continued from an
-  earlier page". A known gap should be treated as following on.
+- **Ripped-out pages.** Pages are sometimes torn out, so the notebook's printed page numbers skip. Built so
+  far (November 25, 2026): a "Continued from an earlier page" entry after a skip has **Merge with Previous
+  Entry**, which saves on that page that it follows on (`PageInfo.followsOn`), and the merged entry can be
+  split again. Not built: when the page being viewed has a previous or next page whose number skips, a
+  small control to say that one or more pages were ripped out there. It should stay quiet: nothing in the
+  journal marks a ripped page; she just sees the page numbers skip.
 - **Two pages with different heights.** A photo of both pages is cut with one frame around both, split at
   the fold. When one page sits much higher than the other, each page's top and bottom could be found
   separately instead.
@@ -294,7 +293,7 @@ Not started. Listed so they aren't forgotten.
 
 ## Known issues
 
-- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, renaming a name on every page, the Storage list in Settings, keeping photos as HEIC and converting older pages, removing
+- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, renaming a name on every page, the Storage list in Settings, sorting and starring entries, merging a continued entry with the one before, keeping photos as HEIC and converting older pages, removing
   and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink
   tint, adding both pages from one photo, and dropping several photos at once. They pass
   `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked

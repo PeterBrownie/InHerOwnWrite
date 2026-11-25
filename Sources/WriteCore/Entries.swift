@@ -315,7 +315,7 @@ public enum EntryBuilder {
 
             if !leading.isEmpty {
                 let part = EntryPart(pageID: page.id, pageNumber: page.number, startLine: 0, heading: nil, body: leading)
-                if let previousNumber, previousNumber + 1 == page.number, !entries.isEmpty {
+                if let previousNumber, previousNumber + 1 == page.number || page.followsOn == true, !entries.isEmpty {
                     entries[entries.count - 1].parts.append(part)
                 } else {
                     entries.append(JournalEntry(id: part.id, journalID: journalID, heading: nil, weekday: nil,
@@ -492,5 +492,92 @@ public enum LineFlow {
             sources += paragraph.sources
         }
         return Flowed(text: String(utf16CodeUnits: units, count: units.count), sources: sources)
+    }
+}
+
+/// An entry she starred. Found again after edits by where it starts, or by its date line on the same page.
+public struct StarredEntry: Codable, Hashable, Sendable {
+    public var id: String
+    public var pageID: UUID
+    public var heading: String?
+
+    public init(_ entry: JournalEntry) {
+        id = entry.id
+        pageID = entry.parts.first?.pageID ?? UUID()
+        heading = entry.heading
+    }
+}
+
+public enum EntryStars {
+    /// The saved stars, each moved to the entry it now belongs to. An entry's id is where it starts on its page,
+    /// so lines added above it move it; its date line then finds it, and changing the date keeps the id.
+    /// Stars on deleted pages are dropped; others that match nothing are kept, since a page being read again
+    /// has no text for a moment.
+    public static func reconcile(_ stars: [StarredEntry], entries: [JournalEntry], pageIDs: Set<UUID>) -> [StarredEntry] {
+        var result: [StarredEntry] = []
+        var seen = Set<String>()
+        for star in stars where pageIDs.contains(star.pageID) {
+            let onPage = entries.filter { $0.parts.first?.pageID == star.pageID }
+            let match = onPage.first { $0.id == star.id && $0.heading == star.heading }
+                ?? (star.heading == nil ? nil : onPage.first { $0.heading == star.heading })
+                ?? onPage.first { $0.id == star.id }
+            let updated = match.map(StarredEntry.init) ?? star
+            if seen.insert(updated.id).inserted { result.append(updated) }
+        }
+        return result
+    }
+}
+
+/// How the entries list is ordered.
+public enum EntrySort: String, CaseIterable, Identifiable, Sendable {
+    case date
+    case length
+
+    public var id: String { rawValue }
+
+    /// Puts entries in order by date or by number of words. `entries` must be in written order, as
+    /// `EntryBuilder` returns them. An entry without a date takes the date of the entry before it in its journal
+    /// (or the first dated one after, at the start), and entries with the same date stay in written order.
+    /// A journal with no dates at all goes last either way.
+    public func sorted(_ entries: [JournalEntry], ascending: Bool, wordCount: (JournalEntry) -> Int) -> [JournalEntry] {
+        switch self {
+        case .length:
+            let counts = entries.map(wordCount)
+            let order = entries.indices.sorted { a, b in
+                counts[a] != counts[b] ? (counts[a] < counts[b]) == ascending : a < b
+            }
+            return order.map { entries[$0] }
+        case .date:
+            let keys = Self.dateKeys(entries)
+            let dated = entries.indices.filter { keys[$0] != nil }.sorted { a, b in
+                keys[a]! != keys[b]! ? keys[a]! < keys[b]! : a < b
+            }
+            let undated = entries.indices.filter { keys[$0] == nil }
+            return (ascending ? dated : dated.reversed()).map { entries[$0] } + undated.map { entries[$0] }
+        }
+    }
+
+    private struct DateKey: Comparable {
+        let year: Int, month: Int, day: Int, time: String
+        static func < (a: DateKey, b: DateKey) -> Bool {
+            (a.year, a.month, a.day, a.time) < (b.year, b.month, b.day, b.time)
+        }
+    }
+
+    private static func dateKeys(_ entries: [JournalEntry]) -> [DateKey?] {
+        var keys: [DateKey?] = entries.map { entry in
+            guard let month = entry.month, let day = entry.day else { return nil }
+            return DateKey(year: entry.year ?? 0, month: month, day: day, time: entry.time ?? "")
+        }
+        // Carry each date forward to undated entries after it, then back to any at the start of a journal.
+        for index in entries.indices.dropFirst() where keys[index] == nil
+            && entries[index].journalID == entries[index - 1].journalID {
+            keys[index] = keys[index - 1]
+        }
+        for index in entries.indices.dropLast().reversed() where keys[index] == nil
+            && entries[index].journalID == entries[index + 1].journalID {
+            keys[index] = keys[index + 1]
+        }
+        return keys
     }
 }

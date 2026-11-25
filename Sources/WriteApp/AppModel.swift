@@ -31,6 +31,8 @@ public final class AppModel: ObservableObject {
         static let showConfidence = "showConfidence"
         static let localDepth = "localDepth"
         static let localLetterOptions = "localLetterOptions"
+        static let entrySort = "entrySort"
+        static let entrySortAscending = "entrySortAscending"
     }
 
     private static let idleLockSeconds: Double = 10 * 60
@@ -50,6 +52,21 @@ public final class AppModel: ObservableObject {
     @Published public var selectedPageID: UUID?
     @Published public var selectedEntryID: String?
     @Published public private(set) var libraryMode: LibraryMode = .pages
+    /// How the entries list is ordered: by date or by length, either way round.
+    @Published public var entrySort: EntrySort {
+        didSet { UserDefaults.standard.set(entrySort.rawValue, forKey: PreferenceKey.entrySort) }
+    }
+    @Published public var entrySortAscending: Bool {
+        didSet { UserDefaults.standard.set(entrySortAscending, forKey: PreferenceKey.entrySortAscending) }
+    }
+    /// Shows only starred entries, from every journal.
+    @Published public var showsStarredOnly = false
+    @Published public private(set) var starredEntries: [StarredEntry] = [] {
+        didSet { starredIDs = Set(starredEntries.map(\.id)) }
+    }
+    private var starredIDs: Set<String> = []
+    /// Words in each entry, by entry id; counted when entries are rebuilt.
+    private var entryWordCounts: [String: Int] = [:]
     @Published public var showingAnalysis = false
     @Published public var searchText = "" {
         didSet { openedFrom = nil }
@@ -161,6 +178,8 @@ public final class AppModel: ObservableObject {
         deviceUnlockOn = Vault.deviceUnlockKey(in: directory) != nil
         deviceUnlockMethod = DeviceUnlock.methodName()
         let defaults = UserDefaults.standard
+        entrySort = defaults.string(forKey: PreferenceKey.entrySort).flatMap(EntrySort.init(rawValue:)) ?? .date
+        entrySortAscending = defaults.object(forKey: PreferenceKey.entrySortAscending) as? Bool ?? true
         let mode = defaults.string(forKey: PreferenceKey.appearance).flatMap(AppearanceMode.init(rawValue:)) ?? .system
         appearance = mode
         accent = AccentChoice.current
@@ -300,6 +319,9 @@ public final class AppModel: ObservableObject {
         pagesWithProgress = []
         focusedWord = nil
         entries = []
+        entryWordCounts = [:]
+        starredEntries = []
+        showsStarredOnly = false
         selectedJournalID = nil
         selectedPageID = nil
         selectedEntryID = nil
@@ -332,6 +354,7 @@ public final class AppModel: ObservableObject {
             apiKey = try vault.apiKey()
             hasAPIKey = apiKey != nil
             hiddenWords = try vault.hiddenWords()
+            starredEntries = try vault.starredEntries()
             let loaded = try vault.pages()
             texts = Dictionary(uniqueKeysWithValues: try loaded.map { ($0.id, try vault.text(pageID: $0.id)) })
             try reload()
@@ -443,9 +466,78 @@ public final class AppModel: ObservableObject {
         return pages.filter { matchesSearch(texts[$0.id] ?? "") }
     }
 
+    /// The entries list: the selected journal's entries, the search's matches, or starred entries from every
+    /// journal, in the chosen order.
     public var visibleEntries: [JournalEntry] {
-        guard isSearching else { return entries.filter { $0.journalID == selectedJournalID } }
-        return entries.filter { matchesSearch($0.bodyText) || matchesSearch($0.heading ?? "") }
+        var list: [JournalEntry]
+        if isSearching {
+            list = entries.filter { matchesSearch($0.bodyText) || matchesSearch($0.heading ?? "") }
+        } else if showsStarredOnly {
+            list = entries
+        } else {
+            list = entries.filter { $0.journalID == selectedJournalID }
+        }
+        if showsStarredOnly { list = list.filter(isStarred) }
+        return entrySort.sorted(list, ascending: entrySortAscending) { self.wordCount(of: $0) }
+    }
+
+    public func wordCount(of entry: JournalEntry) -> Int {
+        entryWordCounts[entry.id] ?? WordTokenizer.tokens(in: entry.bodyText).count
+    }
+
+    public func isStarred(_ entry: JournalEntry) -> Bool {
+        starredIDs.contains(entry.id)
+    }
+
+    /// The entry written just before this one in its journal.
+    private func entryBefore(_ entry: JournalEntry) -> JournalEntry? {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }), index > 0,
+              entries[index - 1].journalID == entry.journalID else { return nil }
+        return entries[index - 1]
+    }
+
+    /// Whether an entry that starts "Continued from an earlier page" has an entry before it to join.
+    public func canMergeWithPrevious(_ entry: JournalEntry) -> Bool {
+        entry.heading == nil && entryBefore(entry) != nil
+    }
+
+    /// Joins a continued entry onto the one before it, by marking its page as following on.
+    public func mergeWithPrevious(_ entry: JournalEntry) {
+        guard canMergeWithPrevious(entry), let previous = entryBefore(entry), let pageID = entry.parts.first?.pageID
+        else { return }
+        let wasSelected = selectedEntryID == entry.id
+        flushEdits()
+        attempt { try $0.setFollowsOn(pageID: pageID, true) }
+        if wasSelected { selectedEntryID = previous.id }
+    }
+
+    /// The pages of an entry that were joined on by Merge with Previous Entry, where it can be split again.
+    public func joinedParts(of entry: JournalEntry) -> [EntryPart] {
+        entry.parts.dropFirst().filter { $0.startLine == 0 && page(id: $0.pageID)?.followsOn == true }
+    }
+
+    /// Undoes Merge with Previous Entry: the entry ends before this page again.
+    public func split(_ entry: JournalEntry, at part: EntryPart) {
+        let wasSelected = selectedEntryID == entry.id
+        flushEdits()
+        attempt { try $0.setFollowsOn(pageID: part.pageID, false) }
+        if wasSelected { selectedEntryID = part.id }
+    }
+
+    public func toggleStar(_ entry: JournalEntry) {
+        guard let vault else { return }
+        var updated = starredEntries
+        if isStarred(entry) {
+            updated.removeAll { $0.id == entry.id }
+        } else {
+            updated.append(StarredEntry(entry))
+        }
+        do {
+            try vault.setStarredEntries(updated)
+            starredEntries = updated
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     public var selectedPage: PageInfo? {
@@ -925,6 +1017,13 @@ public final class AppModel: ObservableObject {
         pagesWithProgress = (try? vault.pagesWithProgress()) ?? []
         let currentTexts = texts
         entries = EntryBuilder.build(pages: pages, journalOrder: journals.map(\.id)) { currentTexts[$0] ?? "" }
+        entryWordCounts = Dictionary(entries.map { ($0.id, WordTokenizer.tokens(in: $0.bodyText).count) },
+                                     uniquingKeysWith: { first, _ in first })
+        let stars = EntryStars.reconcile(starredEntries, entries: entries, pageIDs: Set(pages.map(\.id)))
+        if stars != starredEntries {
+            try? vault.setStarredEntries(stars)
+            starredEntries = stars
+        }
         if let selectedEntryID, !entries.contains(where: { $0.id == selectedEntryID }) {
             self.selectedEntryID = nil
         }

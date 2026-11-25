@@ -290,6 +290,18 @@ func runVaultChecks(in directory: URL) throws {
     check("API key survives hiding words", try afterSwap.apiKey() == keyCanary)
     check("no plaintext names on disk", !fileContains(url, Data("CANARYNAME".utf8)))
     check("no plaintext hidden words on disk", !fileContains(url, Data("CANARYHIDDEN".utf8)))
+    let starredPages = try afterSwap.pages()
+    let starredEntry = EntryBuilder.build(pages: starredPages, journalOrder: [journal.id]) {
+        $0 == other.id ? "Monday, May 4\nhello" : ""
+    }.first
+    let starred = starredEntry.map { [StarredEntry($0)] } ?? []
+    try afterSwap.setStarredEntries(starred)
+    check("round-trips starred entries", try !starred.isEmpty && afterSwap.starredEntries() == starred)
+    check("hidden words survive starring", try afterSwap.hiddenWords() == ["CANARYHIDDEN"])
+    try afterSwap.setFollowsOn(pageID: other.id, true)
+    check("saves a page that follows on", try afterSwap.pages().first { $0.id == other.id }?.followsOn == true)
+    try afterSwap.movePage(id: other.id, toJournal: journal.id, number: 201)
+    check("moving a page forgets that it followed on", try afterSwap.pages().first { $0.id == other.id }?.followsOn == nil)
 
     // Pages saved before this update have no structure field.
     var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(page)) as! [String: Any]
@@ -334,6 +346,62 @@ func runEntryChecks() {
     check("infers a missing year", entries[safe: 2]?.year == 2026 && entries[safe: 2]?.yearWasInferred == true)
     check("a gap in pages starts a new undated entry", entries.last?.title == "Continued from an earlier page")
     check("keeps the heading out of the body", entries[safe: 1]?.parts.first?.body == "body a")
+
+    // Merge with Previous Entry: the page after a gap continues the entry before it.
+    var joined = pages
+    joined[2].followsOn = true
+    let merged = EntryBuilder.build(pages: joined, journalOrder: [journal]) { texts[$0] ?? "" }
+    check("a page marked as following on joins the entry before", merged.count == 4
+          && merged.last?.parts.count == 2 && merged.last?.pageLabel == "pp. 2–4")
+    var leading = pages
+    leading[0].followsOn = true
+    check("the first page has nothing to join",
+          EntryBuilder.build(pages: leading, journalOrder: [journal]) { texts[$0] ?? "" }.count == 5)
+
+    // Sorting.
+    let words: (JournalEntry) -> Int = { WordTokenizer.tokens(in: $0.bodyText).count }
+    let titles = { (list: [JournalEntry]) in list.map(\.title) }
+    let oldest = EntrySort.date.sorted(entries, ascending: true, wordCount: words)
+    check("date order keeps undated entries by the entry before", titles(oldest) == titles(entries))
+    let newest = EntrySort.date.sorted(entries, ascending: false, wordCount: words)
+    check("newest first reverses it", titles(newest) == titles(entries.reversed()))
+    let outOfOrder = [page(1)]
+    let outOfOrderText = [outOfOrder[0].id: "March 3, 2026\nlater\nJanuary 9, 2026\nearlier"]
+    let shuffled = EntryBuilder.build(pages: outOfOrder, journalOrder: [journal]) { outOfOrderText[$0] ?? "" }
+    check("sorts by the date written, not the page",
+          EntrySort.date.sorted(shuffled, ascending: true, wordCount: words).first?.month == 1)
+    let longest = EntrySort.length.sorted(entries, ascending: false, wordCount: words)
+    check("longest first", longest.map(words) == entries.map(words).sorted(by: >))
+    let shortest = EntrySort.length.sorted(entries, ascending: true, wordCount: words)
+    check("shortest first, ties in written order", shortest.map(words) == entries.map(words).sorted()
+          && shortest.first?.id == entries.first { words($0) == shortest.map(words).first }?.id)
+    let noDates = UUID()
+    let undatedPage = PageInfo(id: UUID(), journalID: noDates, number: 1, status: .done, problem: nil,
+                               wasCutOff: false, createdAt: Date(), updatedAt: Date())
+    let mixed = EntryBuilder.build(pages: [undatedPage] + pages, journalOrder: [noDates, journal]) {
+        $0 == undatedPage.id ? "no dates here" : texts[$0] ?? ""
+    }
+    check("a journal with no dates goes last either way",
+          EntrySort.date.sorted(mixed, ascending: true, wordCount: words).last?.journalID == noDates
+          && EntrySort.date.sorted(mixed, ascending: false, wordCount: words).last?.journalID == noDates)
+
+    // Stars find their entry again after edits.
+    let jan6 = entries[2]
+    let star = StarredEntry(jan6)
+    let allPages = Set(pages.map(\.id))
+    var shiftedTexts = texts
+    shiftedTexts[pages[0].id] = "an added line\n" + texts[pages[0].id]!
+    let shifted = EntryBuilder.build(pages: pages, journalOrder: [journal]) { shiftedTexts[$0] ?? "" }
+    let moved = EntryStars.reconcile([star], entries: shifted, pageIDs: allPages)
+    check("a star follows its entry when lines are added above",
+          moved.first?.id != star.id && moved.first?.id == shifted.first { $0.heading == "Jan 6" }?.id)
+    var redatedTexts = texts
+    redatedTexts[pages[0].id] = texts[pages[0].id]!.replacingOccurrences(of: "Jan 6", with: "January 8, 2026")
+    let redated = EntryBuilder.build(pages: pages, journalOrder: [journal]) { redatedTexts[$0] ?? "" }
+    let renamed = EntryStars.reconcile([star], entries: redated, pageIDs: allPages)
+    check("a star stays when the date is changed", renamed.first?.id == star.id && renamed.first?.heading == "January 8, 2026")
+    check("a star waits while its page has no text", EntryStars.reconcile([star], entries: [], pageIDs: allPages) == [star])
+    check("a star on a deleted page is dropped", EntryStars.reconcile([star], entries: [], pageIDs: []).isEmpty)
 
     let rollover = [page(1)]
     let rolloverText = [rollover[0].id: "December 30, 2025\nlate\nJanuary 2\nearly"]
@@ -729,6 +797,36 @@ func runRender(output: URL, sample: URL?) async throws {
     model.searchText = "the bread"
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("3d-entries-search.png"))
     model.searchText = ""
+    // Stars, sorting by length, and a page after a gap whose entry can be merged with the one before.
+    if let entry = model.selectedEntry { model.toggleStar(entry) }
+    model.addPage(journalID: journal.id, number: 5, photo: photo, replacing: false)
+    let gapPage = model.pages.first { $0.journalID == journal.id && $0.number == 5 }
+    if let gapPage {
+        model.editText("and the drive home took all afternoon.", pageID: gapPage.id)
+        model.flushEdits()
+    }
+    model.entrySort = .length
+    model.entrySortAscending = false
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size,
+                 to: output.appendingPathComponent("3e-entries-longest-starred.png"))
+    let continued = model.entries.first { $0.parts.first?.pageID == gapPage?.id }
+    check("a continued entry after a gap can be merged", continued.map(model.canMergeWithPrevious) == true)
+    check("the first entry in a journal can't be merged", model.entries.first.map(model.canMergeWithPrevious) == false)
+    if let continued { model.mergeWithPrevious(continued) }
+    let mergedEntry = model.entries.first { $0.parts.contains { $0.pageID == gapPage?.id } }
+    check("merging joins the page onto the entry before", mergedEntry?.parts.count == 2
+          && mergedEntry.map(model.joinedParts(of:))?.count == 1)
+    if let mergedEntry, let part = model.joinedParts(of: mergedEntry).first { model.split(mergedEntry, at: part) }
+    check("splitting undoes it", model.entries.contains { $0.parts.first?.pageID == gapPage?.id })
+    model.showsStarredOnly = true
+    model.entrySort = .date
+    model.entrySortAscending = true
+    await render(RootView().environmentObject(model).environmentObject(updater), size: size,
+                 to: output.appendingPathComponent("3e-entries-starred-dark.png"), dark: true)
+    check("starred shows only starred entries", model.visibleEntries.count == 1)
+    model.showsStarredOnly = false
+    if let entry = model.selectedEntry { model.toggleStar(entry) }
+    if let gapPage { model.deletePage(id: gapPage.id) }
     model.showingAnalysis = true
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("8-analysis.png"))
     await render(AnalysisDetail(showingTrend: .perMonth).environmentObject(model), size: CGSize(width: 900, height: 900),
