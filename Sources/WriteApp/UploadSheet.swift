@@ -1141,6 +1141,22 @@ public struct SettingsSheet: View {
 
             Divider()
 
+            if let method = model.deviceUnlockMethod ?? (model.deviceUnlockOn ? "Touch ID or Apple Watch" : nil) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Unlock with \(method)", isOn: Binding(
+                        get: { model.deviceUnlockOn },
+                        set: { on in Task { await model.setDeviceUnlock(on) } }
+                    ))
+                    .disabled(model.isWorking)
+                    Text("Opens the journal without typing the password. The password and recovery key still work.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Divider()
+            }
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("Change password").font(.headline)
                 SecureField("New password (\(Vault.minimumPasswordLength)+ characters)", text: $password)
@@ -1174,5 +1190,6 @@ public struct SettingsSheet: View {
         .padding(24)
         .frame(width: 480)
         .background(Theme.card)
+        .onAppear { model.refreshDeviceUnlockMethod() }
     }
 }

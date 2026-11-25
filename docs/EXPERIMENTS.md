@@ -274,3 +274,9 @@ Not started. Listed so they aren't forgotten.
   tint, adding both pages from one photo, and dropping several photos at once. They pass
   `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked
   with the real model (`--local`), but none has been used in the app itself yet.
+- **Unlocking with Touch ID or Apple Watch hasn't been tried by hand** (November 24, 2026). The checks cover
+  the vault side with a software key, and a probe confirmed that a Secure Enclave key can be made and used by
+  an ad-hoc signed program like this app. Not yet confirmed: that one Touch ID prompt is enough (the app
+  passes the approved prompt on to the enclave, so it shouldn't ask twice), and that the watch works, since the
+  Mac it was built on has no paired watch. The Keychain was not used: its Touch ID items need a
+  `keychain-access-groups` entitlement, which a build signed without Xcode or a team can't have.

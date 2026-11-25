@@ -53,6 +53,12 @@ final class Database {
                 recovery_salt BLOB NOT NULL,
                 recovery_wrap BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS device_unlock (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                device_key BLOB NOT NULL,
+                share BLOB NOT NULL,
+                wrap BLOB NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 record BLOB NOT NULL

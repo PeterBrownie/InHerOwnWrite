@@ -13,6 +13,8 @@ public enum VaultError: Error, LocalizedError, Equatable {
     case duplicatePage
     case invalidPageNumber
     case invalidJournalName
+    case deviceUnlockOff
+    case deviceUnlockFailed
     case database(String)
 
     public var errorDescription: String? {
@@ -28,10 +30,22 @@ public enum VaultError: Error, LocalizedError, Equatable {
         case .duplicatePage: return "That page number is already saved in this journal."
         case .invalidPageNumber: return "Page numbers run from 1 to \(Vault.maximumPageNumber)."
         case .invalidJournalName: return "Give the journal a name."
+        case .deviceUnlockOff: return "Unlocking without the password is turned off. Enter your password."
+        case .deviceUnlockFailed: return "The journal couldn't be opened that way. Enter your password."
         case .database(let message): return "The database reported a problem: \(message)"
         }
     }
 }
+
+/// A key that agrees a shared secret with a public key: the Mac's Secure Enclave key in the app (its use needs
+/// Touch ID or a nearby Apple Watch), or a plain software key in the checks.
+public protocol UnlockAgreementKey {
+    var publicKey: P256.KeyAgreement.PublicKey { get }
+    func sharedSecretFromKeyAgreement(with publicKeyShare: P256.KeyAgreement.PublicKey) throws -> SharedSecret
+}
+
+extension P256.KeyAgreement.PrivateKey: UnlockAgreementKey {}
+extension SecureEnclave.P256.KeyAgreement.PrivateKey: UnlockAgreementKey {}
 
 public struct JournalInfo: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
@@ -184,6 +198,70 @@ public final class Vault: @unchecked Sendable {
 
     public func lock() {
         locked { keys = nil }
+    }
+
+    // MARK: - Unlocking with Touch ID or Apple Watch
+
+    /// Whether this vault keeps a copy of its key that this Mac's Secure Enclave can open.
+    public static func deviceUnlockKey(in directory: URL) -> Data? {
+        let url = databaseURL(in: directory)
+        guard FileManager.default.fileExists(atPath: url.path), let database = try? Database(path: url.path) else {
+            return nil
+        }
+        return try? database.query("SELECT device_key FROM device_unlock WHERE id = 1") { $0.blob(0) }.first
+    }
+
+    /// Wraps a copy of the master key for a key that agrees secrets: the Secure Enclave key in the app,
+    /// whose use needs Touch ID or a nearby Apple Watch. `storedKey` is what reopens that key later (for the
+    /// Secure Enclave, an encrypted handle that only this Mac can use). The password still works as before.
+    public func enableDeviceUnlock(storedKey: Data, agreement: any UnlockAgreementKey) throws {
+        try locked {
+            let keys = try requireKeys()
+            let share = P256.KeyAgreement.PrivateKey()
+            let shareData = share.publicKey.x963Representation
+            let wrappingKey = try Self.deviceWrappingKey(
+                share.sharedSecretFromKeyAgreement(with: agreement.publicKey), share: shareData
+            )
+            let wrap = try Crypto.seal(
+                keys.master.withUnsafeBytes { Data($0) }, key: wrappingKey, context: Self.wrapContext("device", shareData, 0)
+            )
+            try database.run(
+                "INSERT OR REPLACE INTO device_unlock (id, device_key, share, wrap) VALUES (1, ?, ?, ?)",
+                [.blob(storedKey), .blob(shareData), .blob(wrap)]
+            )
+        }
+    }
+
+    public func disableDeviceUnlock() throws {
+        try locked {
+            _ = try requireKeys()
+            try database.run("DELETE FROM device_unlock")
+        }
+    }
+
+    /// Opens the vault with the key `reopen` rebuilds from the stored handle. Asking it to agree a secret is
+    /// what needs Touch ID or the watch.
+    public static func unlock(in directory: URL, deviceKey reopen: (Data) throws -> any UnlockAgreementKey) throws -> Vault {
+        let database = try openDatabase(in: directory)
+        _ = try readHeader(database)
+        guard let row = try database.query("SELECT device_key, share, wrap FROM device_unlock WHERE id = 1", map: {
+            (key: $0.blob(0), share: $0.blob(1), wrap: $0.blob(2))
+        }).first else { throw VaultError.deviceUnlockOff }
+        // Any failure here (a key from another Mac, an enclave that said no) means the password is needed.
+        guard let agreement = try? reopen(row.key),
+              let share = try? P256.KeyAgreement.PublicKey(x963Representation: row.share),
+              let secret = try? agreement.sharedSecretFromKeyAgreement(with: share),
+              let masterBytes = try? Crypto.open(
+                  row.wrap, key: deviceWrappingKey(secret, share: row.share), context: wrapContext("device", row.share, 0)
+              )
+        else { throw VaultError.deviceUnlockFailed }
+        return Vault(database: database, keys: Keys(master: SymmetricKey(data: masterBytes)))
+    }
+
+    private static func deviceWrappingKey(_ secret: SharedSecret, share: Data) -> SymmetricKey {
+        secret.hkdfDerivedSymmetricKey(
+            using: SHA256.self, salt: share, sharedInfo: Data("In Her Own Write device unlock".utf8), outputByteCount: 32
+        )
     }
 
     public func changePassword(to password: String) throws {

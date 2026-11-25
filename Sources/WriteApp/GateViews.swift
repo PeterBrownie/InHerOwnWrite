@@ -211,6 +211,16 @@ struct UnlockView: View {
             .tint(Theme.accent)
             .controlSize(.large)
             .disabled(secret.isEmpty || model.isWorking)
+            if !usingRecovery, model.canUnlockWithDevice, let method = model.deviceUnlockMethod {
+                Button {
+                    Task { await model.unlockWithDevice() }
+                } label: {
+                    Label("Unlock with \(method)", systemImage: method == "Apple Watch" ? "applewatch" : "touchid")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+                .disabled(model.isWorking)
+            }
             Button(usingRecovery ? "Use password instead" : "Forgot your password?") {
                 usingRecovery.toggle()
                 secret = ""
@@ -220,6 +230,11 @@ struct UnlockView: View {
             .frame(maxWidth: .infinity)
         }
         .onAppear { focused = true }
+        .task {
+            // Ask once when the lock screen appears, if the app is in front; the button asks again.
+            model.refreshDeviceUnlockMethod()
+            if NSApplication.shared.isActive { await model.unlockWithDevice() }
+        }
     }
 
     private func submit() {

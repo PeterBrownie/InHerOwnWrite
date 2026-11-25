@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CryptoKit
 import Foundation
 import ImageIO
 import SQLite3
@@ -227,8 +228,32 @@ func runVaultChecks(in directory: URL) throws {
     check("recovery key survives a password change",
           (try? Vault.unlock(in: directory, recoveryKey: created.recoveryKey)) != nil)
 
+    // Touch ID and Apple Watch: a software key stands in for the Secure Enclave key.
+    let deviceKey = P256.KeyAgreement.PrivateKey()
+    let storedKey = Data("stand-in for the enclave's key handle".utf8)
+    check("unlocking without the password starts off", Vault.deviceUnlockKey(in: directory) == nil)
+    check("device unlock refused while it's off", throwsError(VaultError.deviceUnlockOff) {
+        _ = try Vault.unlock(in: directory) { _ in deviceKey }
+    })
+    try recovered.enableDeviceUnlock(storedKey: storedKey, agreement: deviceKey)
+    check("device unlock keeps the key handle", Vault.deviceUnlockKey(in: directory) == storedKey)
+    var handedBack: Data?
+    let byDevice = try Vault.unlock(in: directory) { handedBack = $0; return deviceKey }
+    check("device key opens the vault", try byDevice.text(pageID: page.id) == textCanary && handedBack == storedKey)
+    check("another key can't open it", throwsError(VaultError.deviceUnlockFailed) {
+        _ = try Vault.unlock(in: directory) { _ in P256.KeyAgreement.PrivateKey() }
+    })
+    try byDevice.changePassword(to: "a brand new password")
+    check("device unlock survives a password change", (try? Vault.unlock(in: directory) { _ in deviceKey }) != nil)
+    try byDevice.disableDeviceUnlock()
+    check("turning it off deletes the copy", Vault.deviceUnlockKey(in: directory) == nil
+          && throwsError(VaultError.deviceUnlockOff) { _ = try Vault.unlock(in: directory) { _ in deviceKey } })
+
     reopened.lock()
     check("locked vault refuses reads", throwsError(VaultError.locked) { _ = try reopened.text(pageID: page.id) })
+    check("a locked vault can't turn device unlock on", throwsError(VaultError.locked) {
+        try reopened.enableDeviceUnlock(storedKey: storedKey, agreement: deviceKey)
+    })
 
     // Swap two ciphertexts directly in SQLite. Authentication must catch it.
     var raw: OpaquePointer?

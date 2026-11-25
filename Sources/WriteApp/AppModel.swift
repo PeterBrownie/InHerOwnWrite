@@ -36,6 +36,9 @@ public final class AppModel: ObservableObject {
     private static let idleLockSeconds: Double = 10 * 60
 
     @Published public private(set) var screen: Screen
+    /// Whether the journal can be opened with Touch ID or the watch, and which of them this Mac has.
+    @Published public private(set) var deviceUnlockOn = false
+    @Published public private(set) var deviceUnlockMethod: String?
     @Published public private(set) var journals: [JournalInfo] = []
     @Published public private(set) var pages: [PageInfo] = []
     @Published public internal(set) var texts: [UUID: String] = [:]
@@ -138,6 +141,8 @@ public final class AppModel: ObservableObject {
     public init(directory: URL) {
         self.directory = directory
         screen = Vault.exists(in: directory) ? .locked : .create
+        deviceUnlockOn = Vault.deviceUnlockKey(in: directory) != nil
+        deviceUnlockMethod = DeviceUnlock.methodName()
         let defaults = UserDefaults.standard
         let mode = defaults.string(forKey: PreferenceKey.appearance).flatMap(AppearanceMode.init(rawValue:)) ?? .system
         appearance = mode
@@ -184,6 +189,60 @@ public final class AppModel: ObservableObject {
             let directory = self.directory
             self.vault = try await Task.detached { try Vault.unlock(in: directory, recoveryKey: recoveryKey) }.value
             self.screen = .chooseNewPassword
+        }
+    }
+
+    /// Whether the unlock screen should show the Touch ID or Apple Watch button. Checked again each time,
+    /// since the watch comes and goes and Touch ID is off with the lid closed.
+    public var canUnlockWithDevice: Bool {
+        deviceUnlockOn && deviceUnlockMethod != nil
+    }
+
+    public func refreshDeviceUnlockMethod() {
+        deviceUnlockMethod = DeviceUnlock.methodName()
+    }
+
+    public func unlockWithDevice() async {
+        refreshDeviceUnlockMethod()
+        guard canUnlockWithDevice, !isWorking else { return }
+        do {
+            let context = try await DeviceUnlock.authenticate(reason: "open your journal")
+            await perform {
+                let directory = self.directory
+                self.vault = try await Task.detached {
+                    try Vault.unlock(in: directory) { try DeviceUnlock.reopenKey($0, context: context) }
+                }.value
+                self.enterLibrary()
+            }
+        } catch where DeviceUnlock.wasCancelled(error) {
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Turns opening with Touch ID or the watch on (after asking for it once, so it's known to work) or off.
+    /// Turning it off deletes the vault's wrapped copy of the key.
+    public func setDeviceUnlock(_ on: Bool) async {
+        guard let vault else { return }
+        refreshDeviceUnlockMethod()
+        if !on {
+            await perform {
+                try await Task.detached { try vault.disableDeviceUnlock() }.value
+                self.deviceUnlockOn = false
+            }
+            return
+        }
+        guard let method = deviceUnlockMethod else { return }
+        do {
+            let context = try await DeviceUnlock.authenticate(reason: "let \(method) open your journal")
+            await perform {
+                let key = try DeviceUnlock.makeKey(context: context)
+                try await Task.detached { try vault.enableDeviceUnlock(storedKey: key.dataRepresentation, agreement: key) }.value
+                self.deviceUnlockOn = true
+            }
+        } catch where DeviceUnlock.wasCancelled(error) {
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
