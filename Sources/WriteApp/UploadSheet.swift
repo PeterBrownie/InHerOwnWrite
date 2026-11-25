@@ -34,6 +34,10 @@ public struct UploadSheet: View {
     /// Photos dropped together that are still to come, in the order they were taken.
     @ViewState private var queue: [URL] = []
     @ViewState private var batchSize = 0
+    /// The photo showing, and the ones already saved or skipped, so she can go back to fix one.
+    @ViewState private var current: URL?
+    @ViewState private var history: [Visited] = []
+    @ViewState private var pendingLayout: Layout?
     @ViewState private var showResult = false
     @ViewState private var results: [NSImage] = []
     @ViewState private var isProcessing = false
@@ -401,6 +405,10 @@ public struct UploadSheet: View {
                     .lineLimit(2)
             }
             Spacer()
+            if !history.isEmpty {
+                Button("Back to Last Photo") { goBack() }
+                    .help("Go back to the photo before this one to fix its frame, fold line, or page number")
+            }
             Button("Done") { dismiss() }
                 .keyboardShortcut(.cancelAction)
             if !needsFirstJournal {
@@ -480,13 +488,42 @@ public struct UploadSheet: View {
         }
         savedMessage = nil
         queue = Array(photos.dropFirst())
+        history = []
         batchSize = photos.count
         load(first)
         return true
     }
 
+    /// How a saved photo was framed, to bring back when she returns to it.
+    struct Layout {
+        let bothPages: Bool
+        let quarterTurns: Int
+        let straighten: Double
+        let crop: CGRect
+        let split: Double
+        let numberText: String
+    }
+
+    struct Visited {
+        let url: URL
+        let layout: Layout?
+    }
+
+    /// Returns to the photo before this one, framed as it was saved. Saving it again asks before replacing
+    /// the pages saved from it.
+    private func goBack() {
+        guard let last = history.popLast() else { return }
+        if let current, jpeg != nil { queue.insert(current, at: 0) }
+        batchSize = history.count + 1 + queue.count
+        savedMessage = nil
+        pendingLayout = last.layout
+        load(last.url)
+    }
+
     /// Goes on to the next photo of a batch, or clears the photo when there is none.
-    private func advance() {
+    private func advance(saved layout: Layout? = nil) {
+        if let current { history.append(Visited(url: current, layout: layout)) }
+        current = nil
         if queue.isEmpty {
             clearPhoto()
             batchSize = 0
@@ -514,6 +551,7 @@ public struct UploadSheet: View {
     }
 
     private func load(_ url: URL) {
+        current = url
         problem = nil
         clearPhoto()
         isPreparing = true
@@ -538,7 +576,22 @@ public struct UploadSheet: View {
         jpeg = prepared
         preview = NSImage(data: prepared)
         isPreparing = false
-        findPages(reorient: true)
+        guard let layout = pendingLayout else {
+            findPages(reorient: true)
+            return
+        }
+        pendingLayout = nil
+        if bothPages != layout.bothPages {
+            modeSetByPhoto = true
+            bothPages = layout.bothPages
+        }
+        quarterTurns = layout.quarterTurns
+        refreshTurned()
+        straighten = layout.straighten
+        crop = layout.crop
+        split = layout.split
+        numberText = layout.numberText
+        numberWasTyped = true
     }
 
     /// Switching between one page and both looks again. Both pages are levelled along with the fold, so the
@@ -724,7 +777,8 @@ public struct UploadSheet: View {
             }
         }
         let saved = numbers.count > 1 ? "Pages \(numbers[0]) and \(numbers[1])" : "Page \(numbers[0])"
-        advance()
+        advance(saved: Layout(bothPages: bothPages, quarterTurns: quarterTurns, straighten: straighten, crop: crop,
+                              split: split, numberText: numberText))
         problem = nil
         savedMessage = model.readsLocally
             ? "\(saved) saved and being read on this Mac."

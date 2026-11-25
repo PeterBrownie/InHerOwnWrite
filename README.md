@@ -55,6 +55,8 @@ Press **+** or ⌘N and drop in a photo. With no journals yet, the sheet first a
 journal's name. Drop several photos at once (or choose several) to add them one after another, in the order
 they were taken; **Skip** leaves one out.
 
+- **Going back.** **Back to Last Photo** returns to the photo before, framed as it was saved, to fix its
+  frame, fold line, or page number. Saving it again asks before replacing the pages saved from it.
 - **One page or both.** Each new photo is checked for a second page: when its writing parts at a fold near
   the middle, **Photo shows** switches to **Both pages** by itself, and back for a single page; you can
   still change it. Under **Photo shows**, choose **Both pages** for a photo of the open journal. The
