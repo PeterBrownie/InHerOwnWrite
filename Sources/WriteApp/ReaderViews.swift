@@ -251,6 +251,7 @@ private struct PageColumn: View {
 struct EntryReader: View {
     @EnvironmentObject private var model: AppModel
     let entry: JournalEntry
+    @ViewState private var isChangingDate = false
 
     private var position: String {
         let list = model.entries.filter { $0.journalID == entry.journalID }
@@ -299,8 +300,18 @@ struct EntryReader: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title)
-                        .font(.system(size: 22, weight: .semibold, design: .serif))
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(entry.title)
+                            .font(.system(size: 22, weight: .semibold, design: .serif))
+                        Spacer()
+                        Button("Change Date…") { isChangingDate = true }
+                            .buttonStyle(.link)
+                            .font(.callout)
+                            .popover(isPresented: $isChangingDate, arrowEdge: .bottom) {
+                                EntryDateEditor(entry: entry) { isChangingDate = false }
+                                    .environmentObject(model)
+                            }
+                    }
                     Text(details)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -470,5 +481,67 @@ struct WordOutline: View {
             shape.stroke(Color.blue, lineWidth: 2)
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// Sets an entry's date and time by hand. The change is written as the entry's date line on its first page.
+private struct EntryDateEditor: View {
+    @EnvironmentObject private var model: AppModel
+    let entry: JournalEntry
+    let done: () -> Void
+    @ViewState private var date = Date()
+    @ViewState private var time = Date()
+    @ViewState private var includesTime = false
+
+    init(entry: JournalEntry, done: @escaping () -> Void) {
+        self.entry = entry
+        self.done = done
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        let today = calendar.dateComponents([.year, .month, .day], from: Date())
+        let parts = entry.time?.split(separator: ":").compactMap { Int($0) } ?? []
+        let day = calendar.date(from: DateComponents(year: entry.year ?? today.year, month: entry.month ?? today.month,
+                                                     day: entry.day ?? today.day)) ?? Date()
+        let clock = calendar.date(bySettingHour: parts.first ?? 12, minute: parts.count > 1 ? parts[1] : 0, second: 0, of: day) ?? day
+        _date = ViewState(wrappedValue: day)
+        _time = ViewState(wrappedValue: clock)
+        _includesTime = ViewState(wrappedValue: entry.time != nil)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Entry date").font(.headline)
+            DatePicker("Date", selection: $date, displayedComponents: .date)
+                .datePickerStyle(.field)
+            Toggle("Time", isOn: $includesTime)
+            if includesTime {
+                DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.field)
+                    .labelsHidden()
+            }
+            Text(entry.heading == nil
+                 ? "A date line is added at the start of this entry on page \(entry.firstPage)."
+                 : "The entry's date line on page \(entry.firstPage) is rewritten.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel", action: done)
+                Button("Set Date") {
+                    let calendar = Calendar.current
+                    let day = calendar.dateComponents([.year, .month, .day], from: date)
+                    let clock = calendar.dateComponents([.hour, .minute], from: time)
+                    if let year = day.year, let month = day.month, let dayNumber = day.day {
+                        model.setDate(of: entry, year: year, month: month, day: dayNumber,
+                                      hour: includesTime ? clock.hour : nil, minute: clock.minute ?? 0)
+                    }
+                    done()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 280)
     }
 }

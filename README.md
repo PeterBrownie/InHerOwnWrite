@@ -79,7 +79,9 @@ page. A page that can't be read keeps its photo and can be retried.
 
 - **Pages or entries.** Each page is split into entries wherever a date line starts one, so an entry can be
   part of a page or run across several. A date written without a year takes its year from nearby entries.
-  Editing a date line in the text updates the entry.
+  Editing a date line in the text updates the entry, or click **Change Date…** above an entry to pick a
+  date and time; that rewrites the entry's date line, or adds one. A line that is only a time ("9:30 pm"),
+  first on a page or after a blank line, starts a new entry on the same day as the one before.
 - **Color.** Settings has five colors for buttons, links, and charts: Clay (the original), Green, Blue,
   Plum, and Slate.
 - **Reading controls.** Show or hide the photo, show one page or two, and flip with ⌘[ and ⌘]. Accurate

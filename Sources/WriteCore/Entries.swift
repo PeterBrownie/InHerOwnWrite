@@ -199,7 +199,66 @@ extension DateFormatter {
     }
 }
 
+/// A line that is only a time of day, "9:30 pm" or "21:15", starting a later entry on the same day.
+public enum TimeHeadingParser {
+    private static let expression = try! NSRegularExpression(
+        pattern: #"^\s*(?:at\s*)?(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<meridiem>a\.?m\.?|p\.?m\.?)?[\s.,;:\-–—]*$"#,
+        options: [.caseInsensitive])
+
+    public static func parse(_ line: String) -> EntryMarker? {
+        let text = line.trimmingCharacters(in: .whitespaces)
+        guard (3...16).contains(text.count),
+              let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+        else { return nil }
+        func group(_ name: String) -> String? {
+            let range = match.range(withName: name)
+            guard range.location != NSNotFound, let swiftRange = Range(range, in: text) else { return nil }
+            return String(text[swiftRange])
+        }
+        guard var hour = group("hour").flatMap(Int.init) else { return nil }
+        let minute = group("minute").flatMap(Int.init)
+        let meridiem = group("meridiem")?.lowercased()
+        // A bare number is a page number or a count, not a time.
+        guard minute != nil || meridiem != nil, (minute ?? 0) < 60 else { return nil }
+        if let meridiem {
+            guard (1...12).contains(hour) else { return nil }
+            hour = hour % 12 + (meridiem.hasPrefix("p") ? 12 : 0)
+        }
+        guard hour < 24 else { return nil }
+        return EntryMarker(headingLine: text, time: String(format: "%02d:%02d", hour, minute ?? 0))
+    }
+}
+
 public enum EntryBuilder {
+    /// A date line as the app writes it when a date is set by hand: "Thursday, March 5, 2026 9:30 pm".
+    public static func headingLine(year: Int, month: Int, day: Int, hour: Int? = nil, minute: Int = 0) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        let date = calendar.date(from: DateComponents(year: year, month: month, day: day))
+        let weekday = date.map { weekdays[calendar.component(.weekday, from: $0) - 1] + ", " } ?? ""
+        var line = "\(weekday)\(DateFormatter.monthName(month)) \(day), \(year)"
+        if let hour {
+            let shown = hour % 12 == 0 ? 12 : hour % 12
+            line += String(format: " %d:%02d %@", shown, minute, hour < 12 ? "am" : "pm")
+        }
+        return line
+    }
+
+    /// The page text with an entry part's date line replaced, or added above the part when it has none.
+    public static func settingHeading(_ line: String, of part: EntryPart, in text: String) -> String {
+        var lines = lines(of: text)
+        if part.heading != nil, lines.indices.contains(part.startLine) {
+            lines[part.startLine] = line
+        } else {
+            // The part's writing starts at its first non-blank line.
+            let start = lines.indices.first { $0 >= part.startLine && !lines[$0].trimmingCharacters(in: .whitespaces).isEmpty }
+                ?? part.startLine
+            lines.insert(line, at: min(start, lines.count))
+        }
+        return lines.joined(separator: "\n")
+    }
+
     public static func lines(of text: String) -> [String] {
         text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
     }
@@ -222,6 +281,12 @@ public enum EntryBuilder {
             for (index, line) in lines.enumerated() where found[index] == nil {
                 if let parsed = DateHeadingParser.parse(line) { found[index] = parsed }
             }
+        }
+        // A time alone starts an entry only when it stands apart: first on the page or after a blank line.
+        for (index, line) in lines.enumerated() where found[index] == nil {
+            guard index == 0 || lines[index - 1].trimmingCharacters(in: .whitespaces).isEmpty,
+                  let parsed = TimeHeadingParser.parse(line) else { continue }
+            found[index] = parsed
         }
         return found.keys.sorted().map { ($0, found[$0]!) }
     }
@@ -262,10 +327,16 @@ public enum EntryBuilder {
                 let headingText = lines[heading.line].trimmingCharacters(in: .whitespaces)
                 let part = EntryPart(pageID: page.id, pageNumber: page.number, startLine: heading.line,
                                      heading: headingText, body: trimmed(lines[bodyStart..<end]))
+                var marker = heading.marker
+                // A time alone takes its day from the entry before.
+                if marker.month == nil, marker.time != nil, let previous = entries.last {
+                    (marker.weekday, marker.year, marker.month, marker.day) = (previous.weekday, previous.year,
+                                                                               previous.month, previous.day)
+                }
                 entries.append(JournalEntry(
-                    id: part.id, journalID: journalID, heading: headingText, weekday: heading.marker.weekday,
-                    year: heading.marker.year, month: heading.marker.month, day: heading.marker.day,
-                    time: heading.marker.time, parts: [part]
+                    id: part.id, journalID: journalID, heading: headingText, weekday: marker.weekday,
+                    year: marker.year, month: marker.month, day: marker.day,
+                    time: marker.time, parts: [part]
                 ))
             }
             previousNumber = page.number

@@ -360,6 +360,23 @@ func runEntryChecks() {
     let rhythm = snapshot.entryRhythm()
     check("counts entries, dated or not", rhythm.entryCount == 5 && rhythm.datedCount == 3)
     check("an entry over two pages counts once", rhythm.byMonth.map(\.count) == [3])
+    check("reads a time alone", TimeHeadingParser.parse("9:30 pm")?.time == "21:30"
+          && TimeHeadingParser.parse("at 7am")?.time == "07:00" && TimeHeadingParser.parse("42") == nil
+          && TimeHeadingParser.parse("13:75") == nil)
+    let timed = [page(1)]
+    let timedText = "March 5, 2026\nmorning words\n\n9:30 pm\nnight words\nsaid 10:15 pm\nstill night"
+    let timedEntries = EntryBuilder.build(pages: timed, journalOrder: [journal]) { _ in timedText }
+    check("a time alone starts an entry on the same day", timedEntries.count == 2
+          && timedEntries[1].day == 5 && timedEntries[1].month == 3 && timedEntries[1].time == "21:30"
+          && timedEntries[1].bodyText.contains("still night"))
+    let line = EntryBuilder.headingLine(year: 2026, month: 3, day: 5, hour: 21, minute: 30)
+    check("writes a date line it can read back", line == "Thursday, March 5, 2026 9:30 pm"
+          && DateHeadingParser.parse(line)?.time == "21:30" && DateHeadingParser.parse(line)?.weekday == "Thursday")
+    let rewritten = EntryBuilder.settingHeading(line, of: timedEntries[0].parts[0], in: timedText)
+    check("rewrites an entry's date line", rewritten.hasPrefix(line + "\nmorning words"))
+    let continued = EntryBuilder.build(pages: timed, journalOrder: [journal]) { _ in "\nfirst words" }[0].parts[0]
+    check("adds a date line where there was none",
+          EntryBuilder.settingHeading(line, of: continued, in: "\nfirst words") == "\n" + line + "\nfirst words")
     let spaced = [page(1), page(2)]
     let spacedText = [
         spaced[0].id: "Monday, January 5, 2026\nfirst\n\nJanuary 6, 2026\nsecond\n\nJanuary 20, 2026\nthird",

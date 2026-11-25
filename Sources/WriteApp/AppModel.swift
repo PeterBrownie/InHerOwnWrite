@@ -502,6 +502,15 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// Sets an entry's date, and time if given, by rewriting its date line, or adding one, on its first page.
+    public func setDate(of entry: JournalEntry, year: Int, month: Int, day: Int, hour: Int?, minute: Int) {
+        guard let part = entry.parts.first, let text = texts[part.pageID] else { return }
+        let line = EntryBuilder.headingLine(year: year, month: month, day: day, hour: hour, minute: minute)
+        editText(EntryBuilder.settingHeading(line, of: part, in: text), pageID: part.pageID)
+        flushEdits()
+        selectedEntryID = entries.first { $0.parts.first?.pageID == part.pageID && $0.heading == line }?.id ?? selectedEntryID
+    }
+
     public func flushEdits() {
         editSaveTask?.cancel()
         editSaveTask = nil
