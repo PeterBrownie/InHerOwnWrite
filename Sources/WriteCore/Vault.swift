@@ -74,6 +74,11 @@ public struct PageInfo: Identifiable, Hashable, Codable, Sendable {
     /// Set when she said the text at the top of this page continues the entry before it, even though the page
     /// numbers skip (a ripped-out page, say). Missing on older pages.
     public var followsOn: Bool? = nil
+    /// What Vision reads on the page's photo, for noticing the same page saved twice. Missing on older pages
+    /// until it's worked out in the background.
+    public var fingerprint: PageFingerprint? = nil
+    /// Claude's findings for each custom stat counted by reading, by the stat's ID.
+    public var stats: [String: StatFinding]? = nil
 
     public init(id: UUID, journalID: UUID, number: Int, status: ReadingStatus, problem: String?, wasCutOff: Bool,
                 createdAt: Date, updatedAt: Date, structure: PageStructure? = nil) {
@@ -96,6 +101,8 @@ private struct AppSettings: Codable {
     var photosConverted: Bool?
     /// Entries she starred, in the order she starred them.
     var starredEntries: [StarredEntry]?
+    /// Stats she made in Analysis, in the order she made them.
+    var customStats: [CustomStat]?
 }
 
 /// The encrypted journal database.
@@ -341,6 +348,14 @@ public final class Vault: @unchecked Sendable {
         try updateSettings { $0.starredEntries = stars }
     }
 
+    public func customStats() throws -> [CustomStat] {
+        try locked { try readSettings().customStats ?? [] }
+    }
+
+    public func setCustomStats(_ stats: [CustomStat]) throws {
+        try updateSettings { $0.customStats = stats }
+    }
+
     private func updateSettings(_ change: (inout AppSettings) -> Void) throws {
         try locked {
             var settings = try readSettings()
@@ -440,7 +455,7 @@ public final class Vault: @unchecked Sendable {
     /// as HEIC; the checks pass `converting: false` to make pages like those saved before that.
     @discardableResult
     public func addPage(journalID: UUID, number: Int, photo: Data, replacing: Bool = false,
-                        converting: Bool = true) throws -> PageInfo {
+                        converting: Bool = true, fingerprint: PageFingerprint? = nil) throws -> PageInfo {
         guard (1...Self.maximumPageNumber).contains(number) else { throw VaultError.invalidPageNumber }
         let photo = converting ? try PagePhoto.forStorage(photo) : photo
         return try locked {
@@ -448,8 +463,9 @@ public final class Vault: @unchecked Sendable {
             guard try journals().contains(where: { $0.id == journalID }) else { throw VaultError.notFound }
             let slot = try slot(journalID: journalID, number: number)
             let now = Date()
-            let page = PageInfo(id: UUID(), journalID: journalID, number: number, status: .waiting,
+            var page = PageInfo(id: UUID(), journalID: journalID, number: number, status: .waiting,
                                 problem: nil, wasCutOff: false, createdAt: now, updatedAt: now)
+            page.fingerprint = fingerprint
             let id = Self.key(page.id)
             let record = try sealRecord(page)
             let body = try Crypto.seal(Data(), key: keys.records, context: "page/\(id)/body")
@@ -563,6 +579,11 @@ public final class Vault: @unchecked Sendable {
             let people = page.structure?.people
             page.structure = transcription.structure
             if page.structure != nil { page.structure?.people = people }
+            for (statID, quotes) in transcription.statQuotes {
+                var stats = page.stats ?? [:]
+                stats[statID.uuidString] = StatFinding(quotes: quotes, text: transcription.text)
+                page.stats = stats
+            }
             page.updatedAt = Date()
             let id = Self.key(pageID)
             let body = try Crypto.seal(Data(transcription.text.utf8), key: keys.records, context: "page/\(id)/body")
@@ -648,6 +669,39 @@ public final class Vault: @unchecked Sendable {
             page.status = status
             page.problem = problem
             page.updatedAt = Date()
+            try database.run("UPDATE pages SET record = ? WHERE id = ?",
+                             [.blob(try sealRecord(page)), .text(Self.key(pageID))])
+        }
+    }
+
+    /// Saves Claude's findings for custom stats on a page, alongside any it has for other stats.
+    public func setStatFindings(pageID: UUID, _ findings: [UUID: StatFinding]) throws {
+        try locked {
+            var page = try page(id: pageID)
+            var stats = page.stats ?? [:]
+            for (id, finding) in findings { stats[id.uuidString] = finding }
+            page.stats = stats
+            try database.run("UPDATE pages SET record = ? WHERE id = ?",
+                             [.blob(try sealRecord(page)), .text(Self.key(pageID))])
+        }
+    }
+
+    /// Forgets a deleted stat's findings on every page.
+    public func removeStatFindings(statID: UUID) throws {
+        try locked {
+            for var page in try pages() where page.stats?[statID.uuidString] != nil {
+                page.stats?[statID.uuidString] = nil
+                try database.run("UPDATE pages SET record = ? WHERE id = ?",
+                                 [.blob(try sealRecord(page)), .text(Self.key(page.id))])
+            }
+        }
+    }
+
+    /// Saves what Vision reads on a page's photo, for older pages saved before fingerprints.
+    public func setFingerprint(pageID: UUID, _ fingerprint: PageFingerprint) throws {
+        try locked {
+            var page = try page(id: pageID)
+            page.fingerprint = fingerprint
             try database.run("UPDATE pages SET record = ? WHERE id = ?",
                              [.blob(try sealRecord(page)), .text(Self.key(pageID))])
         }

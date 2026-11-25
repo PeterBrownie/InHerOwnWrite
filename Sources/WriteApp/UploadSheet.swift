@@ -59,6 +59,13 @@ public struct UploadSheet: View {
     @ViewState private var confirmReplace = false
     @ViewState private var problem: String?
     @ViewState private var savedMessage: String?
+    /// What Vision reads on each page of this photo as first framed, and any saved page each looks like.
+    @ViewState private var fingerprints: [PageFingerprint?] = []
+    @ViewState private var lookalikes: [PageInfo?] = []
+    @ViewState private var isCheckingDuplicates = false
+    /// Digests of the photo files saved from this sheet, and of each photo in the batch, to leave out repeats.
+    @ViewState private var seenFiles: Set<String> = []
+    @ViewState private var fileDigests: [URL: String] = [:]
 
     /// A photo to start with, for screenshots and checks.
     private let preloaded: Data?
@@ -350,6 +357,24 @@ public struct UploadSheet: View {
                 }
             }
 
+            if isCheckingDuplicates {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking for pages already saved…").font(.caption).foregroundStyle(.secondary)
+                }
+            } else if let notice = duplicateNotice {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(notice, systemImage: "doc.on.doc")
+                        .font(.caption)
+                        .foregroundStyle(Theme.highlight)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !queue.isEmpty {
+                        Button("Skip This Photo") { advance() }
+                            .controlSize(.small)
+                    }
+                }
+            }
+
             VStack(alignment: .leading, spacing: 6) {
                 Text("Read with").font(.subheadline.weight(.medium))
                 Picker("Read with", selection: $model.readsLocally) {
@@ -425,6 +450,45 @@ public struct UploadSheet: View {
         .padding(.vertical, 14)
     }
 
+    /// Says which saved pages this photo looks like.
+    private var duplicateNotice: String? {
+        let found = lookalikes.enumerated().compactMap { index, page in page.map { (index, $0) } }
+        guard !found.isEmpty else { return nil }
+        let multipleJournals = model.journals.count > 1
+        func name(_ page: PageInfo) -> String {
+            "page \(page.number)" + (multipleJournals ? " in \(model.journalName(page.journalID))" : "")
+        }
+        if lookalikes.count > 1 {
+            let sentence = found.map { "the \($0.0 == 0 ? "left" : "right") page looks like \(name($0.1))" }
+                .joined(separator: ", and ")
+            return "Already saved? " + sentence.prefix(1).uppercased() + sentence.dropFirst() + "."
+        }
+        return "This looks like \(name(found[0].1)), already saved."
+    }
+
+    /// Reads the found page, or both, with Vision and compares them with the saved pages.
+    private func checkDuplicates(jpeg: Data, crops: [CGRect], rotation: Double, count: Int) {
+        isCheckingDuplicates = true
+        let flatten = flattenPages
+        Task {
+            let found = await Task.detached(priority: .utility) { () -> [PageFingerprint?] in
+                var result: [PageFingerprint?] = []
+                for crop in crops {
+                    guard let page = try? PageFlattener.process(jpeg, crop: crop, flatten: flatten, rotation: rotation) else {
+                        result.append(nil)
+                        continue
+                    }
+                    result.append(await PageFingerprint.make(image: page))
+                }
+                return result
+            }.value
+            guard count == scanCount, self.jpeg == jpeg else { return }
+            fingerprints = found
+            lookalikes = found.map { $0.flatMap { model.samePage(as: $0) } }
+            isCheckingDuplicates = false
+        }
+    }
+
     // MARK: Bindings and actions
 
     /// Typing a number stops the photo's page number from replacing it.
@@ -482,14 +546,34 @@ public struct UploadSheet: View {
         let photos = PagePhoto.sortedByDate(urls.filter { url in
             UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) ?? false
         })
-        guard let first = photos.first else {
+        guard !photos.isEmpty else {
             problem = urls.isEmpty ? nil : "Those files aren't photos."
             return false
         }
-        savedMessage = nil
-        queue = Array(photos.dropFirst())
+        // The same file dropped twice, or a photo already saved from this sheet, is left out.
+        var kept: [URL] = []
+        var digests: [URL: String] = [:]
+        var seen = seenFiles
+        for url in photos {
+            let scoped = url.startAccessingSecurityScopedResource()
+            let data = try? Data(contentsOf: url, options: .mappedIfSafe)
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            guard let data else { kept.append(url); continue }
+            let digest = PageFingerprint.fileDigest(data)
+            guard seen.insert(digest).inserted else { continue }
+            digests[url] = digest
+            kept.append(url)
+        }
+        let repeats = photos.count - kept.count
+        guard let first = kept.first else {
+            problem = repeats == 1 ? "That photo was already added." : "Those photos were already added."
+            return false
+        }
+        fileDigests.merge(digests) { $1 }
+        savedMessage = repeats > 0 ? "Left out \(repeats == 1 ? "1 photo" : "\(repeats) photos") added twice." : nil
+        queue = Array(kept.dropFirst())
         history = []
-        batchSize = photos.count
+        batchSize = kept.count
         load(first)
         return true
     }
@@ -541,6 +625,9 @@ public struct UploadSheet: View {
         spreadSuggestion = nil
         orientation = nil
         results = []
+        fingerprints = []
+        lookalikes = []
+        isCheckingDuplicates = false
         showResult = false
         quarterTurns = 0
         straighten = 0
@@ -679,6 +766,7 @@ public struct UploadSheet: View {
             }
             if !numberWasTyped { suggestNumber() }
             if showResult { refreshResult() }
+            checkDuplicates(jpeg: jpeg, crops: savedCrops, rotation: rotation, count: count)
         }
     }
 
@@ -767,15 +855,18 @@ public struct UploadSheet: View {
             return
         }
         let numbers = numbers
-        for (number, page) in zip(numbers, pages) {
+        let prints = fingerprints.count == numbers.count ? fingerprints : numbers.map { _ in nil }
+        for (index, (number, page)) in zip(numbers, pages).enumerated() {
             let replace = replacing && model.isPageTaken(journalID: journalID, number: number)
             guard model.addPage(journalID: journalID, number: number, photo: page, replacing: replace,
-                                readLocally: model.readsLocally) else {
+                                readLocally: model.readsLocally, fingerprint: prints[index]) else {
                 problem = model.errorMessage
                 model.errorMessage = nil
                 return
             }
         }
+        if prints.contains(where: { $0 == nil }) { model.fingerprintOldPages() }
+        if let current, let digest = fileDigests[current] { seenFiles.insert(digest) }
         let saved = numbers.count > 1 ? "Pages \(numbers[0]) and \(numbers[1])" : "Page \(numbers[0])"
         advance(saved: Layout(bothPages: bothPages, quarterTurns: quarterTurns, straighten: straighten, crop: crop,
                               split: split, numberText: numberText))

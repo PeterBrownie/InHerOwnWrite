@@ -76,6 +76,11 @@ they were taken; **Skip** leaves one out.
 - **Page number.** A number printed or written alone at the top or bottom of the page fills in the page
   number. Typing a number replaces it.
 
+- **Pages already saved.** The same photo dropped twice is left out of the batch. Each new photo is also
+  read on the Mac with Vision and compared with the pages already saved; when it looks like one of them,
+  the sheet says which page, and **Skip This Photo** moves on. After reading, a page whose text nearly
+  repeats another page's says so at the top, with a button to open the other page.
+
 The page is encrypted and saved first, then read in the background, so you can move straight to the next
 page. A page that can't be read keeps its photo and can be retried.
 
@@ -108,7 +113,16 @@ page. A page that can't be read keeps its photo and can be retried.
   the longest gap between two entries, the longest and current streaks of days in a row, and which days of
   the week have the most entries. From the times written in date headings, it shows the usual time of
   writing and a chart of entries by time of day. Click a month or week in the entries chart to list just
-  its entries; clear the label above the list, or pick a journal, to see them all again.
+  its entries; clear the label above the list, or pick a journal, to see them all again. Words in **Top
+  words** are numbered by rank. A plain click on a word or name goes back to the top of the page to show it.
+- **Your stats.** **New Stat…** in Analysis counts something you describe in your own words, such as "How
+  many times did I cry?". Claude suggests a name ("Cry Count"), what counts as one, and the words that show
+  it, from the question alone. Choose **Words** to count those words on the Mac, instantly, or **Claude
+  Reading** to have Claude read each page's text and quote every instance: older pages are sent as text,
+  never photos, a few pages at a time with the page before for context, and every page read by Claude
+  after that is counted in the same request that reads it. A stat shows its total, the entries and pages
+  it appears in, a chart over time, and where each instance was found. A page edited after it was counted
+  is counted again when you ask.
 
 ## Reading on this Mac (experimental)
 

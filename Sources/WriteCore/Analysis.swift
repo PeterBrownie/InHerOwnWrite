@@ -299,7 +299,7 @@ public struct AnalysisSnapshot: Sendable {
     }
 
     let units: [Unit]
-    private let journalNames: [UUID: String]
+    let journalNames: [UUID: String]
     private let nameList: [String]
     /// The people the names mean, by `PeopleDirectory.key` of their label ("Hannah K.", "Hannah (unsure which)").
     private let persons: [String: PersonCounts]
@@ -666,7 +666,7 @@ public struct AnalysisSnapshot: Sendable {
 
     // MARK: - Timelines
 
-    private func pageBins(_ perUnit: [Int]) -> [TimelineBin] {
+    func pageBins(_ perUnit: [Int]) -> [TimelineBin] {
         var ordered: [(journal: UUID, page: UUID, number: Int)] = []
         var positions: [UUID: Int] = [:]
         for unit in units where positions[unit.pageID] == nil {
@@ -695,7 +695,7 @@ public struct AnalysisSnapshot: Sendable {
         }
     }
 
-    private func dateBins(_ perUnit: [Int]) -> [TimelineBin] {
+    func dateBins(_ perUnit: [Int]) -> [TimelineBin] {
         let dated = zip(units, perUnit).compactMap { unit, count -> (unit: Unit, day: Int, count: Int)? in
             Self.dayNumber(unit).map { (unit, $0, count) }
         }
@@ -752,7 +752,7 @@ public struct AnalysisSnapshot: Sendable {
         return calendar
     }()
 
-    private static func dayNumber(_ unit: Unit) -> Int? {
+    static func dayNumber(_ unit: Unit) -> Int? {
         guard let year = unit.year, let month = unit.month, let day = unit.day,
               let date = calendar.date(from: DateComponents(year: year, month: month, day: day))
         else { return nil }

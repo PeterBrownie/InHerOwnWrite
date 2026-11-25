@@ -4,11 +4,14 @@ public struct Transcription: Sendable, Equatable {
     public let text: String
     public let wasCutOff: Bool
     public let structure: PageStructure
+    /// For each custom stat counted along with the reading, the words on the page showing each instance.
+    public var statQuotes: [UUID: [String]] = [:]
 
-    public init(text: String, wasCutOff: Bool, structure: PageStructure) {
+    public init(text: String, wasCutOff: Bool, structure: PageStructure, statQuotes: [UUID: [String]] = [:]) {
         self.text = text
         self.wasCutOff = wasCutOff
         self.structure = structure
+        self.statQuotes = statQuotes
     }
 }
 
@@ -143,16 +146,23 @@ public struct Transcriber: Sendable {
         return URLSession(configuration: configuration)
     }
 
-    /// Reads a page photo, HEIC or JPEG.
-    public func transcribe(photo: Data) async throws -> Transcription {
+    /// Reads a page photo, HEIC or JPEG. Custom stats counted by reading are counted in the same request.
+    public func transcribe(photo: Data, stats: [CustomStat] = []) async throws -> Transcription {
         guard !apiKey.isEmpty else { throw TranscriberError.missingKey }
         let jpeg = try PagePhoto.forSending(photo)
+        let data = try await send(Self.requestBody(jpeg: jpeg, stats: stats))
+        return try Self.parse(data, stats: stats)
+    }
+
+    /// Posts a Messages request, retrying what can be retried, and returns the reply's body.
+    func send(_ body: [String: Any]) async throws -> Data {
+        guard !apiKey.isEmpty else { throw TranscriberError.missingKey }
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/messages"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
         applyAuth(to: &request)
-        request.httpBody = try JSONSerialization.data(withJSONObject: Self.requestBody(jpeg: jpeg))
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let maxAttempts = 4
         for attempt in 1...maxAttempts {
@@ -173,7 +183,7 @@ public struct Transcriber: Sendable {
                 continue
             }
 
-            if response.statusCode == 200 { return try Self.parse(data) }
+            if response.statusCode == 200 { return data }
 
             let retryable = response.statusCode == 408 || response.statusCode == 409
                 || response.statusCode == 429 || response.statusCode >= 500
@@ -185,6 +195,20 @@ public struct Transcriber: Sendable {
             throw Self.failure(status: response.statusCode, body: data)
         }
         throw TranscriberError.serviceUnavailable
+    }
+
+    /// The structured reply's JSON text, and why the reply stopped. A refusal throws.
+    static func replyJSON(_ data: Data) throws -> (json: String, stopReason: String?) {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let content = object["content"] as? [[String: Any]]
+        else { throw TranscriberError.rejected(200) }
+        let stopReason = object["stop_reason"] as? String
+        if stopReason == "refusal" { throw TranscriberError.declined }
+        let json = content
+            .filter { $0["type"] as? String == "text" }
+            .compactMap { $0["text"] as? String }
+            .joined()
+        return (json, stopReason)
     }
 
     /// Checks a key with a request that contains no journal content.
@@ -203,13 +227,24 @@ public struct Transcriber: Sendable {
         guard http.statusCode == 200 else { throw Self.failure(status: http.statusCode, body: body) }
     }
 
-    static func requestBody(jpeg: Data) -> [String: Any] {
-        [
+    static func requestBody(jpeg: Data, stats: [CustomStat] = []) -> [String: Any] {
+        var schema = outputSchema
+        var request = "Read this journal page."
+        if !stats.isEmpty {
+            var properties = schema["properties"] as? [String: Any] ?? [:]
+            var required = schema["required"] as? [String] ?? []
+            properties["stats"] = StatCounter.statsSchema(stats)
+            required.append("stats")
+            schema["properties"] = properties
+            schema["required"] = required
+            request += "\n\n" + StatCounter.statsInstructions(stats)
+        }
+        return [
             "model": model,
             "max_tokens": 16000,
             "output_config": [
                 "effort": "high",
-                "format": ["type": "json_schema", "schema": outputSchema] as [String: Any],
+                "format": ["type": "json_schema", "schema": schema] as [String: Any],
             ] as [String: Any],
             "fallbacks": "default",
             "system": systemPrompt,
@@ -224,24 +259,14 @@ public struct Transcriber: Sendable {
                             "data": jpeg.base64EncodedString(),
                         ],
                     ],
-                    ["type": "text", "text": "Read this journal page."],
+                    ["type": "text", "text": request],
                 ],
             ]],
         ]
     }
 
-    static func parse(_ data: Data) throws -> Transcription {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = object["content"] as? [[String: Any]]
-        else { throw TranscriberError.rejected(200) }
-
-        let stopReason = object["stop_reason"] as? String
-        if stopReason == "refusal" { throw TranscriberError.declined }
-
-        let json = content
-            .filter { $0["type"] as? String == "text" }
-            .compactMap { $0["text"] as? String }
-            .joined()
+    static func parse(_ data: Data, stats: [CustomStat] = []) throws -> Transcription {
+        let (json, stopReason) = try replyJSON(data)
         guard let reply = try? JSONDecoder().decode(PageReply.self, from: Data(json.utf8)) else {
             throw stopReason == "max_tokens" ? TranscriberError.tooLong : TranscriberError.malformedReply
         }
@@ -252,7 +277,8 @@ public struct Transcriber: Sendable {
         return Transcription(
             text: text,
             wasCutOff: stopReason == "max_tokens",
-            structure: PageStructure(markers: markers, names: Self.cleanNames(reply.names), text: text)
+            structure: PageStructure(markers: markers, names: Self.cleanNames(reply.names), text: text),
+            statQuotes: stats.isEmpty ? [:] : StatCounter.parseStats(json, stats: stats)
         )
     }
 

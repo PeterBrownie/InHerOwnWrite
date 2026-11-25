@@ -875,6 +875,14 @@ func runRender(output: URL, sample: URL?) async throws {
                  to: output.appendingPathComponent("9-analysis-terms-dark.png"), dark: true)
     model.accent = .clay
     model.analysisTerm = ""
+    let walks = CustomStat(name: "Park Walks", question: "How often did I go to the park?", criteria: "",
+                           method: .words, words: ["park", "walk*"], unit: "walks")
+    model.saveStat(walks)
+    await render(AnalysisDetail(showingStat: walks.id).environmentObject(model), size: CGSize(width: 900, height: 1300),
+                 to: output.appendingPathComponent("9b-analysis-custom-stat.png"))
+    await render(StatEditorSheet(existing: walks) { _ in }.environmentObject(model), size: CGSize(width: 520, height: 600),
+                 to: output.appendingPathComponent("9c-stat-editor.png"))
+    model.deleteStat(walks.id)
     model.showingAnalysis = false
     // The people on a page, with one first name shared by two people.
     func namedPage(_ names: [String], people: [String: String]? = nil) -> PageInfo {
@@ -1147,6 +1155,8 @@ if arguments.contains("--local") {
             try await runPhotoStorageChecks()
             try await runAPIChecks()
             try await runQueueChecks()
+            try await runCustomStatChecks()
+            try await runDuplicateChecks()
             try await runLocalReadingChecks()
             runSwitchRuleChecks()
             try runEditingChecks(in: directory)

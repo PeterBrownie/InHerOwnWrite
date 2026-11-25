@@ -253,6 +253,28 @@ ignored. Scribbles become "###", as in readings from Claude.
 - Free space left in the vault by deleted pages is wiped (`secure_delete`) and reused by new pages, so it
   doesn't grow; it isn't worth vacuuming.
 
+## Finding the same page twice
+
+Tested November 25, 2026 on the approved real photos: two photos of the same open journal in different
+light (four pages), two other single pages, and one page of different paper. Each page was cropped and
+flattened as the app saves it, and again with a 3% looser crop and no flattening, as a less careful
+second save would be.
+
+| Fingerprint | Same page | Different pages |
+| --- | --- | --- |
+| Ink map, 48 × 64, rows and columns centered, shifts of ±3 cells | 0.36 to 0.76 | up to 0.42 |
+| Ink map fitted to the writing's own extent instead of the crop | 0.32 to 0.83 | up to 0.36 |
+| Vision's words, share of word pairs in common | 0.47 to 0.80 | 0.06 or less |
+
+- **Kept:** Vision's words. Handwriting is misread, but the same page is misread the same way, and pages
+  share few pairs of words in a row. A score of 0.25 or more counts as the same page. It takes about a
+  second a page; pages saved before are fingerprinted in the background while the library is open.
+- The ink maps were set aside: ruled lines and the rhythm of lines of writing make different pages of one
+  notebook look alike, and a looser crop or a strip of the facing page moves the map more than a few
+  cells' shift can absorb.
+- Also: the same file dropped twice is caught by a digest of its bytes, and after reading, pages whose text
+  shares 60% or more of its runs of four words with another page are marked as possible copies.
+
 ## Future ideas
 
 Not started. Listed so they aren't forgotten.
@@ -286,12 +308,21 @@ Not started. Listed so they aren't forgotten.
 - **Scroll the photo to an outlined word.** When the photo pane is zoomed in, clicking a marked word outlines
   it but doesn't scroll it into view.
 
+- **Custom stats that add up amounts** (November 25, 2026). Stats count instances. "How many hours did I
+  sleep?" or "How much did I spend?" would need each instance to carry a number and the chart to sum them.
+
 - **Lowercase ordinary words in the word counts** (asked for November 24, 2026). The word list shows each
   word's most common spelling, so a word that often starts a sentence shows capitalized. Show ordinary
   words in lowercase, and keep capitals only for names (the names found on pages, and people's names) and
   titles. One way to spot titles: words written with a capital mostly in the middle of a sentence.
 
 ## Known issues
+
+- **Custom stats haven't been tried against the real API** (November 25, 2026). The requests, schemas, and
+  saving pass the offline checks with a stubbed network, but planning a stat, counting old pages from
+  their text, and counting while a page is read haven't been run live, so the quality of Claude's counts
+  and quotes is unmeasured. The duplicate warnings in the add-page sheet and on pages haven't been tried by
+  hand either.
 
 - **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, renaming a name on every page, the Storage list in Settings, sorting and starring entries, merging a continued entry with the one before, clicking a week in Analysis and the chart's hover brightening (offscreen renders can't hover), keeping photos as HEIC and converting older pages, removing
   and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink

@@ -277,6 +277,21 @@ private struct PageColumn: View {
                     .padding(.vertical, 7)
                     .background(Theme.notice)
             }
+            if let twin = model.duplicate(of: page.id) {
+                HStack {
+                    Label("This page's text nearly matches page \(twin.number)"
+                          + (twin.journalID != page.journalID ? " in \(model.journalName(twin.journalID))" : "")
+                          + ". It may be the same page saved twice.", systemImage: "doc.on.doc")
+                    Spacer()
+                    Button("Open Page \(twin.number)") { model.openPage(twin.id) }
+                        .controlSize(.small)
+                }
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(Theme.notice)
+            }
             if !model.showPhoto {
                 textPane
             } else if isCompact {

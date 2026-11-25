@@ -48,7 +48,7 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var deviceUnlockOn = false
     @Published public private(set) var deviceUnlockMethod: String?
     @Published public private(set) var journals: [JournalInfo] = []
-    @Published public private(set) var pages: [PageInfo] = []
+    @Published public internal(set) var pages: [PageInfo] = []
     /// Who the names on each page mean, across every journal; rebuilt whenever pages change.
     @Published public private(set) var people = PeopleDirectory(pages: [])
     @Published public internal(set) var texts: [UUID: String] = [:]
@@ -146,7 +146,7 @@ public final class AppModel: ObservableObject {
 
     let directory: URL
     var vault: Vault?
-    private var apiKey: String?
+    var apiKey: String?
     /// Pages waiting for Claude or being read now, in the order they were added.
     private var readQueue: [UUID] = []
     /// The pages being read right now, at most `concurrentReads` of them.
@@ -179,6 +179,15 @@ public final class AppModel: ObservableObject {
     public var isConvertingPhotos: Bool { photoConversion != nil }
     /// The rest between photos, so converting stays out of the way. The checks shorten it.
     public var photoConversionPause: Duration = .milliseconds(500)
+    /// Works out fingerprints for pages saved before them, one at a time while the library is open.
+    var fingerprinting: Task<Void, Never>?
+    /// Stats she made in Analysis.
+    @Published public internal(set) var customStats: [CustomStat] = []
+    /// Stats being counted by Claude now, with how far along they are.
+    @Published public internal(set) var statCounting: [UUID: StatCountProgress] = [:]
+    var statTasks: [UUID: Task<Void, Never>] = [:]
+    /// Pages whose read text is nearly the same as another page's: page to the page it matches.
+    @Published public private(set) var textDuplicates: [UUID: UUID] = [:]
 
     public init(directory: URL) {
         self.directory = directory
@@ -310,6 +319,13 @@ public final class AppModel: ObservableObject {
         readQueue = []
         photoConversion?.cancel()
         photoConversion = nil
+        fingerprinting?.cancel()
+        fingerprinting = nil
+        statTasks.values.forEach { $0.cancel() }
+        statTasks = [:]
+        statCounting = [:]
+        customStats = []
+        textDuplicates = [:]
         shutDownLocalReading()
         if let vault, pages.contains(where: { $0.status == .reading }) {
             for page in pages where page.status == .reading {
@@ -364,6 +380,7 @@ public final class AppModel: ObservableObject {
             hasAPIKey = apiKey != nil
             hiddenWords = try vault.hiddenWords()
             starredEntries = try vault.starredEntries()
+            customStats = try vault.customStats()
             let loaded = try vault.pages()
             texts = Dictionary(uniqueKeysWithValues: try loaded.map { ($0.id, try vault.text(pageID: $0.id)) })
             try reload()
@@ -371,6 +388,7 @@ public final class AppModel: ObservableObject {
             screen = .library
             startIdleTimer()
             convertOldPhotos()
+            fingerprintOldPages()
         } catch {
             errorMessage = error.localizedDescription
             vault.lock()
@@ -675,11 +693,13 @@ public final class AppModel: ObservableObject {
 
     /// Saves the encrypted photo first, then queues it to be read.
     @discardableResult
-    public func addPage(journalID: UUID, number: Int, photo: Data, replacing: Bool, readLocally: Bool = false) -> Bool {
+    public func addPage(journalID: UUID, number: Int, photo: Data, replacing: Bool, readLocally: Bool = false,
+                        fingerprint: PageFingerprint? = nil) -> Bool {
         guard let vault else { return false }
         do {
             let replaced = pages.first { $0.journalID == journalID && $0.number == number }
-            let page = try vault.addPage(journalID: journalID, number: number, photo: photo, replacing: replacing)
+            let page = try vault.addPage(journalID: journalID, number: number, photo: photo, replacing: replacing,
+                                         fingerprint: fingerprint)
             if let replaced {
                 stopReading([replaced.id])
                 localQueue.removeAll { $0 == replaced.id }
@@ -967,7 +987,8 @@ public final class AppModel: ObservableObject {
         do {
             guard let vault else { throw VaultError.locked }
             let jpeg = try vault.image(pageID: id)
-            outcome = .success(try await makeTranscriber(apiKey).transcribe(photo: jpeg))
+            let stats = customStats.filter { $0.method == .reading }
+            outcome = .success(try await makeTranscriber(apiKey).transcribe(photo: jpeg, stats: stats))
         } catch {
             outcome = .failure(error)
         }
@@ -1043,6 +1064,8 @@ public final class AppModel: ObservableObject {
         pagesWithProgress = (try? vault.pagesWithProgress()) ?? []
         let currentTexts = texts
         entries = EntryBuilder.build(pages: pages, journalOrder: journals.map(\.id)) { currentTexts[$0] ?? "" }
+        let readPages = Set(pages.filter { $0.status == .done }.map(\.id))
+        textDuplicates = TextDuplicates.find(currentTexts.filter { readPages.contains($0.key) })
         entryWordCounts = Dictionary(entries.map { ($0.id, WordTokenizer.tokens(in: $0.bodyText).count) },
                                      uniquingKeysWith: { first, _ in first })
         let stars = EntryStars.reconcile(starredEntries, entries: entries, pageIDs: Set(pages.map(\.id)))

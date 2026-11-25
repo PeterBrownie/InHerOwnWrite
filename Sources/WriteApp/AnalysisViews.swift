@@ -112,22 +112,19 @@ public struct AnalysisDetail: View {
         _trend = ViewState(wrappedValue: showingTrend)
     }
 
-    /// What's typed in the search field but not looked up yet: the lookup waits until typing pauses for a
-    /// second (or Return), since redrawing the charts at every key press lags.
-    @ViewState private var typed: String?
+    /// Opens with one custom stat showing, for the rendered screenshots.
+    public init(showingStat id: UUID) {
+        _shownStat = ViewState(wrappedValue: id)
+    }
+
+    /// The custom stat being shown, if one was chosen.
+    @ViewState private var shownStat: UUID?
+    /// Bumped to jump back to the top of the page.
+    @ViewState private var scrollToTop = 0
 
     private var term: String {
         get { model.analysisTerm }
-        nonmutating set {
-            typed = nil
-            model.analysisTerm = newValue
-        }
-    }
-
-    /// Looks up what's typed now, without waiting.
-    private func applyTyped() {
-        guard let typed else { return }
-        term = typed
+        nonmutating set { model.analysisTerm = newValue }
     }
 
     private func lookUp(_ text: String) {
@@ -149,6 +146,7 @@ public struct AnalysisDetail: View {
             }
         } else {
             term = word
+            scrollToTop += 1
         }
     }
 
@@ -169,11 +167,15 @@ public struct AnalysisDetail: View {
     }
 
     public var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                header
+                header.id("top")
                 if let missing = missingNamesNotice { missing }
                 termSection
+                if let snapshot {
+                    CustomStatsSection(snapshot: snapshot, selected: $shownStat)
+                }
                 if let rhythm, rhythm.entryCount > 0 {
                     entriesSection(rhythm)
                 }
@@ -187,6 +189,8 @@ public struct AnalysisDetail: View {
             .padding(24)
             .frame(maxWidth: 1000, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onChange(of: scrollToTop) { proxy.scrollTo("top", anchor: .top) }
         }
         .background(Theme.card.ignoresSafeArea())
         .task(id: key) {
@@ -251,29 +255,7 @@ public struct AnalysisDetail: View {
 
     private var termSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Type a word, name, or phrase; separate several with commas",
-                          text: Binding(get: { typed ?? term }, set: { typed = $0 }))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 16))
-                    .onSubmit { applyTyped() }
-                    .task(id: typed) {
-                        guard let typed, typed != term else { return }
-                        try? await Task.sleep(for: .seconds(1))
-                        guard !Task.isCancelled, self.typed == typed else { return }
-                        applyTyped()
-                    }
-                if !(typed ?? term).isEmpty {
-                    Button { term = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Clear")
-                }
-            }
-            .padding(10)
-            .background(Theme.paper, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
+            AnalysisSearchField()
 
             if !results.isEmpty {
                 termResult(results)
@@ -562,7 +544,7 @@ public struct AnalysisDetail: View {
             if shown.isEmpty {
                 Text("No words to show.").foregroundStyle(.secondary)
             }
-            WordRows(words: shown, maximum: shown.first?.count ?? 1, chosen: chosenColors) { select($0) }
+            WordRows(words: shown, maximum: shown.first?.count ?? 1, chosen: chosenColors, showsRank: true) { select($0) }
             if words.count > Self.wordLimit {
                 Button(showAllWords ? "Show Fewer" : "Show More") { showAllWords.toggle() }
                     .buttonStyle(.link)
@@ -599,7 +581,7 @@ public enum StatTrend: Hashable, Sendable {
     case perMonth, perWeek, time
 }
 
-private struct StatTile: View {
+struct StatTile: View {
     let label: String
     let value: String
     var detail: String?
@@ -840,7 +822,7 @@ private struct TrendChart: View {
 }
 
 /// One place a word appears: date, page, journal, and two lines around it.
-private struct MatchRow: View {
+struct MatchRow: View {
     let match: TermMatch
     let color: Color?
 
@@ -890,13 +872,21 @@ private struct WordRows: View {
     var chosen: [String: Color] = [:]
     /// For names: renaming one on every page where it's written.
     var onRename: ((WordStat) -> Void)? = nil
+    /// Shows each word's place in the list, counting from 1 for the most used.
+    var showsRank = false
     let onSelect: (String) -> Void
 
     var body: some View {
         VStack(spacing: 2) {
-            ForEach(words) { word in
+            ForEach(Array(words.enumerated()), id: \.element.id) { rank, word in
                 let color = chosen[word.key]
                 HStack(spacing: 8) {
+                    if showsRank {
+                        Text("\(rank + 1)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 26, alignment: .trailing)
+                    }
                     Button { onSelect(word.display) } label: {
                         Text(word.display)
                             .fontWeight(color == nil ? .regular : .semibold)
@@ -997,7 +987,7 @@ struct TimelineSeries {
 
 /// A column chart with hover details; several series sit side by side in each slot. The hovered bar brightens,
 /// and its details sit above it, or beside it when it's too tall, never over it.
-private struct TimelineChart: View {
+struct TimelineChart: View {
     let series: [TimelineSeries]
     /// What each bar counts, singular and plural.
     var noun = ("mention", "mentions")
@@ -1235,5 +1225,52 @@ private struct RenamePersonSheet: View {
         model.renamePerson(label, to: trimmed)
         onRenamed(trimmed)
         dismiss()
+    }
+}
+
+/// The search box above the charts. What's typed stays here until typing pauses for a second (or Return), so
+/// key presses redraw only this field, not the charts and lists below it.
+private struct AnalysisSearchField: View {
+    @EnvironmentObject private var model: AppModel
+    /// What's typed but not looked up yet; nil when the field shows the current lookup.
+    @ViewState private var typed: String?
+
+    static let delay: Duration = .seconds(1)
+
+    var body: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Type a word, name, or phrase; separate several with commas",
+                      text: Binding(get: { typed ?? model.analysisTerm }, set: { typed = $0 }))
+                .textFieldStyle(.plain)
+                .font(.system(size: 16))
+                .onSubmit(apply)
+                .task(id: typed) {
+                    guard let typed, typed != model.analysisTerm else { return }
+                    try? await Task.sleep(for: Self.delay)
+                    guard !Task.isCancelled, self.typed == typed else { return }
+                    apply()
+                }
+            if !(typed ?? model.analysisTerm).isEmpty {
+                Button {
+                    typed = nil
+                    model.analysisTerm = ""
+                } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Clear")
+            }
+        }
+        .padding(10)
+        .background(Theme.paper, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
+        // A word clicked below replaces whatever was being typed.
+        .onChange(of: model.analysisTerm) { typed = nil }
+    }
+
+    private func apply() {
+        guard let typed else { return }
+        if model.analysisTerm != typed { model.analysisTerm = typed }
+        self.typed = nil
     }
 }

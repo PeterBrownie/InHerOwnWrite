@@ -6,6 +6,24 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 47 (November 25, 2026)
+
+- **Make your own stats.** **New Stat…** in Analysis counts something you ask in your own words, such as
+  "How many times did I cry?". Claude suggests a name like "Cry Count", what counts as one, and the words
+  that show it, from the question alone. Count the words on this Mac, instantly, or have Claude read each
+  page's text and quote every instance. Older pages are sent as text, never photos; new pages are counted
+  in the same request that reads them. Each stat has its total, a chart over time, and a list of where it
+  was found.
+- **Pages saved twice are noticed.** The same photo dropped twice is left out. A new photo that looks like
+  a page already saved says which page before you save it, with **Skip This Photo**. A page whose text
+  nearly repeats another page's says so at the top, with a button to open the other one. Pages saved
+  before this update are checked quietly in the background.
+- **Word ranks.** Each word in **Top words** shows its place in the list.
+- **Typing in Analysis no longer lags.** The search box now waits for a one-second pause (or Return)
+  without redrawing the charts and lists at every key press.
+- **Clicking a word or name goes back to the top** of Analysis, where its chart is shown. ⌘-click still
+  adds it to the comparison without moving.
+
 ## Build 46 (November 25, 2026)
 
 - **Click a week in Analysis to see its entries.** In the Entries chart, clicking a week (or a month) opens

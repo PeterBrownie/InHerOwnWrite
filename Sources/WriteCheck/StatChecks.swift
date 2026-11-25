@@ -1,0 +1,155 @@
+import CoreGraphics
+import Foundation
+import ImageIO
+import UniformTypeIdentifiers
+import WriteCore
+
+/// Custom stats: counting words, placing Claude's quotes, the requests sent, and what the vault keeps.
+func runCustomStatChecks() async throws {
+    print("Custom stats")
+    let journal = UUID()
+    func page(_ number: Int) -> PageInfo {
+        PageInfo(id: UUID(), journalID: journal, number: number, status: .done, problem: nil, wasCutOff: false,
+                 createdAt: Date(), updatedAt: Date())
+    }
+    let pages = [page(1), page(2)]
+    let texts = [
+        pages[0].id: "Jan 5, 2026\nI cried at lunch and the tears kept coming.\n\nJan 9, 2026\nA calm day at the park.",
+        pages[1].id: "Feb 2, 2026\nI broke down after the call and cried again.\nCrying is tiring.",
+    ]
+    let entries = EntryBuilder.build(pages: pages, journalOrder: [journal]) { texts[$0] ?? "" }
+    let snapshot = AnalysisSnapshot(entries: entries, includedPages: Set(pages.map(\.id)), names: [], journalNames: [:])
+
+    let words = CustomStat(name: "Cry Count", question: "How many times did I cry?", criteria: "", method: .words,
+                           words: ["cried", "cry*", "broke down"])
+    let counted = snapshot.result(for: words, findings: [:])
+    // "cried" twice, "crying" once through cry*, and "broke down" once.
+    check("counts words, prefixes, and phrases", counted.term.total == 4)
+    check("counts the entries they're in", counted.term.entryCount == 2 && counted.term.pageCount == 2)
+    check("charts word counts by date", counted.term.byDate.reduce(0) { $0 + $1.count } == 4)
+    check("lists where words were found", counted.matches.count == 2 && counted.matches.allSatisfy { $0.highlight != nil })
+    check("a prefix keeps its star", AnalysisSnapshot.pattern("Cry*") == ["cry*"]
+          && AnalysisSnapshot.pattern("broke down") == ["broke", "down"])
+
+    let reading = CustomStat(name: "Cry Count", question: "How many times did I cry?",
+                             criteria: "Each time I cried.", method: .reading, words: [])
+    let found = snapshot.result(for: reading, findings: [
+        pages[0].id: ["I cried at lunch"],
+        pages[1].id: ["broke down after the call", "a quote that isn't on the page"],
+    ])
+    check("counts each quote Claude found", found.term.total == 3)
+    check("places a quote in the entry that holds it",
+          found.matches.first { $0.pageID == pages[0].id }?.snippet.contains("cried at lunch") == true
+          && found.matches.filter { $0.pageID == pages[0].id }.count == 1)
+    check("a quote not on the page still counts on that page",
+          found.matches.first { $0.pageID == pages[1].id }?.count == 2)
+
+    let finding = StatFinding(quotes: ["x"], text: "page text")
+    check("a finding knows the text it was counted on", finding.matches("page text") && !finding.matches("page text, edited"))
+
+    // Batches: about `batchCharacters` each, with the page before as context.
+    let long = String(repeating: "word ", count: StatCounter.batchCharacters / 10)
+    let list = (1...5).map { StatPageText(pageID: UUID(), label: "Page \($0)", text: long + long + long, context: false) }
+    let batches = StatCounter.batches(list)
+    check("splits long text into batches", batches.count > 1)
+    check("every page is counted once", batches.flatMap { $0.filter { !$0.context } }.map(\.pageID) == list.map(\.pageID))
+    check("later batches start with the page before as context",
+          batches.dropFirst().allSatisfy { $0.first?.context == true })
+
+    // Requests (stubbed network).
+    let transcriber = stubbedTranscriber()
+    let counter = StatCounter(transcriber: transcriber)
+    StubAPI.requests = []
+    StubAPI.replies = [(200, [:], rawReply(#"{"name":"Cry Count","unit":"Times","criteria":"Each time I cried.","words":["Cried","cry*"],"method":"words"}"#))]
+    let plan = try await counter.plan(question: "How many times did I cry?")
+    check("plans a stat from the question", plan.name == "Cry Count" && plan.method == .words && plan.words == ["cried", "cry*"])
+    if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
+        let messages = json["messages"] as? [[String: Any]] ?? []
+        check("planning sends only the question", messages.count == 1 && messages[0]["content"] as? String == "How many times did I cry?")
+        let format = (json["output_config"] as? [String: Any])?["format"] as? [String: Any]
+        check("the plan schema follows structured output rules", format.map { schemaIsStrict($0["schema"]!) } ?? false)
+    }
+
+    let context = StatPageText(pageID: UUID(), label: "Page 1", text: "before", context: true)
+    let target = StatPageText(pageID: UUID(), label: "Page 2", text: "I cried.", context: false)
+    let quiet = StatPageText(pageID: UUID(), label: "Page 3", text: "Nothing much.", context: false)
+    StubAPI.requests = []
+    StubAPI.replies = [(200, [:], rawReply(#"{"pages":[{"page":"P1","instances":[{"quote":"before"}]},{"page":"P2","instances":[{"quote":"I cried"}]}]}"#))]
+    let result = try await counter.count(reading, pages: [context, target, quiet])
+    check("counts only pages that aren't context", result[context.pageID] == nil && result[target.pageID] == ["I cried"])
+    check("pages with nothing found are counted as none", result[quiet.pageID] == [])
+    if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
+        let content = (json["messages"] as? [[String: Any]])?.first?["content"] as? String ?? ""
+        check("counting sends text, not photos", content.contains("[P2] Page 2") && content.contains("(context only)")
+              && !String(data: body, encoding: .utf8)!.contains("\"image\""))
+        let format = (json["output_config"] as? [String: Any])?["format"] as? [String: Any]
+        check("the count schema follows structured output rules", format.map { schemaIsStrict($0["schema"]!) } ?? false)
+    }
+
+    // Counted while a page is read.
+    let jpeg = try PagePhoto.prepare(syntheticPhoto())
+    let pageJSON: [String: Any] = ["transcription": "Dear diary, I cried.", "entries": [], "names": [],
+                                   "stats": ["s1": [["quote": "I cried"]]]]
+    StubAPI.requests = []
+    StubAPI.replies = [(200, [:], rawReply(String(data: try JSONSerialization.data(withJSONObject: pageJSON), encoding: .utf8)!))]
+    let read = try await transcriber.transcribe(photo: jpeg, stats: [reading])
+    check("a reading counts stats in the same request", read.statQuotes[reading.id] == ["I cried"])
+    if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
+        let format = (json["output_config"] as? [String: Any])?["format"] as? [String: Any]
+        let schema = format?["schema"] as? [String: Any]
+        check("the reading schema asks for each stat", (schema?["required"] as? [String])?.contains("stats") == true
+              && schemaIsStrict(schema ?? [:]))
+        let content = ((json["messages"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []
+        check("the reading says what counts", (content.last?["text"] as? String)?.contains("Each time I cried.") == true)
+    }
+
+    // What the vault keeps.
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let vault = try Vault.create(in: directory, password: "synthetic password").vault
+    let book = try vault.createJournal(name: "Stats")
+    let mark = PageFingerprint(words: ["an", "invented", "page"])
+    let saved = try vault.addPage(journalID: book.id, number: 1, photo: jpeg, fingerprint: mark)
+    check("a page keeps its fingerprint", try vault.pages().first?.fingerprint == mark)
+    try vault.setCustomStats([reading])
+    check("stats are saved", try vault.customStats() == [reading])
+    try vault.saveReading(pageID: saved.id, transcription: read)
+    check("a reading saves its stat quotes", try vault.pages().first?.stats?[reading.id.uuidString]?.quotes == ["I cried"])
+    try vault.setStatFindings(pageID: saved.id, [reading.id: StatFinding(quotes: ["a", "b"], text: "x")])
+    check("findings can be replaced", try vault.pages().first?.stats?[reading.id.uuidString]?.quotes.count == 2)
+    try vault.removeStatFindings(statID: reading.id)
+    check("a deleted stat's findings are removed", try vault.pages().first?.stats?[reading.id.uuidString] == nil)
+    vault.lock()
+}
+
+/// Duplicate pages: the same file, the same page photographed again, and the same text saved twice.
+func runDuplicateChecks() async throws {
+    print("Duplicate pages")
+    let page = handwrittenPage()
+    check("the same file has the same digest", PageFingerprint.fileDigest(page) == PageFingerprint.fileDigest(page))
+    check("different files have different digests", PageFingerprint.fileDigest(page) != PageFingerprint.fileDigest(page + Data([0])))
+
+    let whole = try PageFlattener.process(page, crop: CGRect(x: 0, y: 0, width: 1, height: 1), flatten: false)
+    let tighter = try PageFlattener.process(page, crop: CGRect(x: 0.03, y: 0.02, width: 0.94, height: 0.95), flatten: true)
+    let first = await PageFingerprint.make(image: whole)
+    let second = await PageFingerprint.make(image: tighter)
+    check("Vision reads words on an invented page", (first?.words.count ?? 0) >= 10)
+    if let first, let second {
+        check("the same page cropped differently matches", first.isSamePage(as: second))
+    }
+    let blank = await PageFingerprint.make(image: syntheticPhoto())
+    check("a blank page has no fingerprint", blank == nil)
+    let a = "we walked down to the river and sat by the water until the light went".split(separator: " ").map(String.init)
+    let b = "my sister called about the trip and we planned the drive for next weekend".split(separator: " ").map(String.init)
+    check("different pages share few word pairs", PageFingerprint.wordSimilarity(a, b) < PageFingerprint.samePage)
+    check("the same words in order match", PageFingerprint.wordSimilarity(a, a) == 1)
+
+    let text = (1...40).map { "line \($0) of an invented page with words" }.joined(separator: "\n")
+    let edited = text.replacingOccurrences(of: "line 3 ", with: "lime 3 ")
+    let other = (1...40).map { "another sentence number \($0) somewhere else entirely" }.joined(separator: "\n")
+    let ids = [UUID(), UUID(), UUID()]
+    let pairs = TextDuplicates.find([ids[0]: text, ids[1]: edited, ids[2]: other])
+    check("pages with nearly the same text are paired", pairs[ids[0]] == ids[1] && pairs[ids[1]] == ids[0])
+    check("a different page isn't paired", pairs[ids[2]] == nil)
+    check("short pages aren't compared", TextDuplicates.find([ids[0]: "a few words", ids[1]: "a few words"]).isEmpty)
+}
