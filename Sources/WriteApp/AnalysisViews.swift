@@ -23,6 +23,10 @@ public struct AnalysisScopeColumn: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !model.journals.isEmpty {
+                    Divider()
+                    DateScopeRow()
+                }
             }
             .padding(14)
         }
@@ -79,9 +83,60 @@ private struct JournalScopeRow: View {
     }
 }
 
+/// Limits Analysis to entries dated between two days.
+private struct DateScopeRow: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var isOn: Binding<Bool> {
+        Binding(
+            get: { model.analysisDateRange != nil },
+            set: { on in
+                let today = Calendar.current.startOfDay(for: Date())
+                model.analysisDateRange = on ? (model.datedEntrySpan ?? today...today) : nil
+            }
+        )
+    }
+
+    private var from: Binding<Date> {
+        Binding(
+            get: { model.analysisDateRange?.lowerBound ?? Date() },
+            set: { date in
+                guard let range = model.analysisDateRange else { return }
+                model.analysisDateRange = date <= range.upperBound ? date...range.upperBound : date...date
+            }
+        )
+    }
+
+    private var to: Binding<Date> {
+        Binding(
+            get: { model.analysisDateRange?.upperBound ?? Date() },
+            set: { date in
+                guard let range = model.analysisDateRange else { return }
+                model.analysisDateRange = date >= range.lowerBound ? range.lowerBound...date : date...date
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Only entries dated", isOn: isOn)
+                .toggleStyle(.checkbox)
+            if model.analysisDateRange != nil {
+                DatePicker("From", selection: from, displayedComponents: .date)
+                DatePicker("To", selection: to, displayedComponents: .date)
+                Text("Entries without a full date, year included, are left out while this is on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 private struct SnapshotKey: Hashable {
     let version: Int
     let pages: Set<UUID>
+    let days: ClosedRange<Int>?
 }
 
 public struct AnalysisDetail: View {
@@ -163,7 +218,7 @@ public struct AnalysisDetail: View {
     }
 
     private var key: SnapshotKey {
-        SnapshotKey(version: model.contentVersion, pages: model.analysisPageIDs)
+        SnapshotKey(version: model.contentVersion, pages: model.analysisPageIDs, days: model.analysisDays)
     }
 
     public var body: some View {

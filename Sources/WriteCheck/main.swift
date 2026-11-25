@@ -882,7 +882,30 @@ func runRender(output: URL, sample: URL?) async throws {
                  to: output.appendingPathComponent("9b-analysis-custom-stat.png"))
     await render(StatEditorSheet(existing: walks) { _ in }.environmentObject(model), size: CGSize(width: 520, height: 600),
                  to: output.appendingPathComponent("9c-stat-editor.png"))
+    let walkSnapshot = await model.makeAnalysisSnapshot()
+    if let match = walkSnapshot.result(for: walks, findings: [:]).matches.first {
+        model.exclude(match, from: walks.id, reason: "Walking to the car doesn't count")
+        await render(AnalysisDetail(showingStat: walks.id).environmentObject(model), size: CGSize(width: 900, height: 1300),
+                     to: output.appendingPathComponent("9d-analysis-stat-left-out.png"))
+        await render(ExcludeReasonSheetPreview(stat: walks, match: match).environmentObject(model),
+                     size: CGSize(width: 480, height: 360), to: output.appendingPathComponent("9e-exclude-reason.png"))
+    }
+    var talks = CustomStat(name: "Friend Talk", question: "How often did I talk about friends?",
+                           criteria: "Each time I describe talking with a friend.", method: .reading, words: [],
+                           notes: ["Theo is my brother"])
+    talks.recountSuggested = true
+    model.saveStat(talks)
+    await render(AnalysisDetail(showingStat: talks.id).environmentObject(model), size: CGSize(width: 900, height: 700),
+                 to: output.appendingPathComponent("9f-analysis-stat-notes-dark.png"), dark: true)
+    await render(StatEditorSheet(existing: talks) { _ in }.environmentObject(model), size: CGSize(width: 520, height: 700),
+                 to: output.appendingPathComponent("9g-stat-editor-notes.png"))
+    model.deleteStat(talks.id)
     model.deleteStat(walks.id)
+    model.analysisDateRange = model.datedEntrySpan
+    await render(AnalysisScopeColumn().environmentObject(model), size: CGSize(width: 280, height: 520),
+                 to: output.appendingPathComponent("9h-analysis-dates.png"))
+    check("a date range can start from the entries' dates", model.analysisDateRange != nil)
+    model.analysisDateRange = nil
     model.showingAnalysis = false
     // The people on a page, with one first name shared by two people.
     func namedPage(_ names: [String], people: [String: String]? = nil) -> PageInfo {

@@ -264,6 +264,8 @@ public struct TermMatch: Identifiable, Hashable, Sendable {
     public let snippet: String
     /// Where the first mention sits in `snippet`, for highlighting.
     public let highlight: Range<Int>?
+    /// The entry it's in, for custom stats that let her leave one out.
+    public var entryID: String? = nil
 
     /// The mention as written, such as "Hannah" for a lookup of "Hannah K.".
     public var highlightedText: String? {
@@ -310,8 +312,10 @@ public struct AnalysisSnapshot: Sendable {
     public let words: [WordStat]
 
     /// `people` says who each name means on each page; without it, each name counts as written.
+    /// `days`, when given, keeps only entries dated within it (see `dayNumber(year:month:day:)`); entries
+    /// without a full date are left out then.
     public init(entries: [JournalEntry], includedPages: Set<UUID>, names: [String], people: PeopleDirectory? = nil,
-                journalNames: [UUID: String]) {
+                journalNames: [UUID: String], days: ClosedRange<Int>? = nil) {
         var units: [Unit] = []
         var counts: [String: Int] = [:]
         var surfaces: [String: [String: Int]] = [:]
@@ -320,6 +324,11 @@ public struct AnalysisSnapshot: Sendable {
         var datedIDs = Set<String>()
 
         for entry in entries {
+            if let days {
+                guard let year = entry.year, let month = entry.month, let day = entry.day,
+                      let number = Self.dayNumber(year: year, month: month, day: day), days.contains(number)
+                else { continue }
+            }
             for part in entry.parts where includedPages.contains(part.pageID) {
                 let tokens = WordTokenizer.tokens(in: part.body)
                 units.append(Unit(journalID: entry.journalID, pageID: part.pageID, pageNumber: part.pageNumber,
@@ -754,9 +763,13 @@ public struct AnalysisSnapshot: Sendable {
     }()
 
     static func dayNumber(_ unit: Unit) -> Int? {
-        guard let year = unit.year, let month = unit.month, let day = unit.day,
-              let date = calendar.date(from: DateComponents(year: year, month: month, day: day))
-        else { return nil }
+        guard let year = unit.year, let month = unit.month, let day = unit.day else { return nil }
+        return dayNumber(year: year, month: month, day: day)
+    }
+
+    /// Days since January 1, 1970, for a written date; used to filter Analysis by date.
+    public static func dayNumber(year: Int, month: Int, day: Int) -> Int? {
+        guard let date = calendar.date(from: DateComponents(year: year, month: month, day: day)) else { return nil }
         return Int(date.timeIntervalSince1970 / 86_400)
     }
 

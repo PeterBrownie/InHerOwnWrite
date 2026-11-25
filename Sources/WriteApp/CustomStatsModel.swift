@@ -23,9 +23,12 @@ extension AppModel {
         guard let vault else { return }
         var stats = customStats
         var recount = stat.method == .reading
+        var stat = stat
         if let index = stats.firstIndex(where: { $0.id == stat.id }) {
             let old = stats[index]
             recount = stat.method == .reading && (old.criteria != stat.criteria || old.method != .reading)
+            // New notes don't throw away what was counted; they offer counting again.
+            if stat.method == .reading, !recount, old.notes != stat.notes, !stat.notes.isEmpty { stat.recountSuggested = true }
             stats[index] = stat
         } else {
             stats.append(stat)
@@ -48,6 +51,10 @@ extension AppModel {
     public func recountStat(_ id: UUID) {
         guard let vault else { return }
         stopCounting(id)
+        if var stat = customStats.first(where: { $0.id == id }), stat.recountSuggested {
+            stat.recountSuggested = false
+            saveStat(stat)
+        }
         do {
             try vault.removeStatFindings(statID: id)
             pages = try vault.pages()
@@ -56,6 +63,35 @@ extension AppModel {
             return
         }
         countStat(id)
+    }
+
+    /// Leaves one entry on one page out of a stat. A reason, for a stat Claude counts, becomes a note Claude
+    /// is given from then on ("Sam is my brother"), with an offer to count every page again.
+    public func exclude(_ match: TermMatch, from statID: UUID, reason: String? = nil) {
+        guard var stat = customStats.first(where: { $0.id == statID }), let entryID = match.entryID,
+              !stat.excludes(pageID: match.pageID, entryID: entryID) else { return }
+        let reason = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let given = reason?.isEmpty == false ? reason : nil
+        stat.exclusions.append(StatExclusion(pageID: match.pageID, entryID: entryID, pageNumber: match.pageNumber,
+                                             date: match.date, snippet: match.snippet, reason: given))
+        if let given, stat.method == .reading, !stat.notes.contains(given) {
+            stat.notes.append(given)
+            stat.recountSuggested = true
+        }
+        saveStat(stat)
+    }
+
+    /// Counts an entry she left out again. Its reason stays among the notes until she removes it there.
+    public func includeAgain(_ exclusion: StatExclusion, in statID: UUID) {
+        guard var stat = customStats.first(where: { $0.id == statID }) else { return }
+        stat.exclusions.removeAll { $0.id == exclusion.id }
+        saveStat(stat)
+    }
+
+    public func dismissRecountSuggestion(_ statID: UUID) {
+        guard var stat = customStats.first(where: { $0.id == statID }), stat.recountSuggested else { return }
+        stat.recountSuggested = false
+        saveStat(stat)
     }
 
     public func deleteStat(_ id: UUID) {

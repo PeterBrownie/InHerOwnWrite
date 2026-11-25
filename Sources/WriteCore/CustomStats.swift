@@ -25,9 +25,16 @@ public struct CustomStat: Codable, Hashable, Identifiable, Sendable {
     public var words: [String]
     /// What one instance is called when counted: "times", "tears", "walks".
     public var unit: String
+    /// Things she told Claude about her journal for this stat, such as "Sam is my brother", sent with the
+    /// criteria whenever pages are counted.
+    public var notes: [String] = []
+    /// Places she left out of the count.
+    public var exclusions: [StatExclusion] = []
+    /// Set when a note was added since the pages were counted, to offer counting them again.
+    public var recountSuggested = false
 
     public init(id: UUID = UUID(), name: String, question: String, criteria: String, method: Method,
-                words: [String], unit: String = "times") {
+                words: [String], unit: String = "times", notes: [String] = []) {
         self.id = id
         self.name = name
         self.question = question
@@ -35,6 +42,59 @@ public struct CustomStat: Codable, Hashable, Identifiable, Sendable {
         self.method = method
         self.words = words
         self.unit = unit
+        self.notes = notes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, question, criteria, method, words, unit, notes, exclusions, recountSuggested
+    }
+
+    // Stats saved before notes and exclusions existed have neither.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        question = try container.decode(String.self, forKey: .question)
+        criteria = try container.decode(String.self, forKey: .criteria)
+        method = try container.decode(Method.self, forKey: .method)
+        words = try container.decode([String].self, forKey: .words)
+        unit = try container.decode(String.self, forKey: .unit)
+        notes = try container.decodeIfPresent([String].self, forKey: .notes) ?? []
+        exclusions = try container.decodeIfPresent([StatExclusion].self, forKey: .exclusions) ?? []
+        recountSuggested = try container.decodeIfPresent(Bool.self, forKey: .recountSuggested) ?? false
+    }
+
+    /// Whether this entry, on this page, was left out of the count.
+    public func excludes(pageID: UUID, entryID: String) -> Bool {
+        exclusions.contains { $0.pageID == pageID && $0.entryID == entryID }
+    }
+
+    /// The criteria with her notes, as Claude is given them.
+    public var criteriaWithNotes: String {
+        let kept = notes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !kept.isEmpty else { return criteria }
+        return criteria + " Notes from the writer: " + kept.map { $0.hasSuffix(".") ? $0 : $0 + "." }.joined(separator: " ")
+    }
+}
+
+/// One entry on one page that she left out of a stat, with what it showed and, if she gave one, why.
+public struct StatExclusion: Codable, Hashable, Sendable, Identifiable {
+    public let pageID: UUID
+    public let entryID: String
+    public let pageNumber: Int
+    public let date: String?
+    public let snippet: String
+    public let reason: String?
+
+    public var id: String { "\(pageID.uuidString)|\(entryID)" }
+
+    public init(pageID: UUID, entryID: String, pageNumber: Int, date: String?, snippet: String, reason: String?) {
+        self.pageID = pageID
+        self.entryID = entryID
+        self.pageNumber = pageNumber
+        self.date = date
+        self.snippet = snippet
+        self.reason = reason
     }
 }
 
@@ -62,6 +122,8 @@ public struct StatFinding: Codable, Hashable, Sendable {
 public struct StatResult: Sendable {
     public let term: TermResult
     public let matches: [TermMatch]
+    /// How many instances her exclusions left out of the chosen pages.
+    public let excludedCount: Int
 }
 
 extension AnalysisSnapshot {
@@ -93,6 +155,14 @@ extension AnalysisSnapshot {
                 }
             }
         }
+        // Entries she left out don't count.
+        var excludedCount = 0
+        if !stat.exclusions.isEmpty {
+            for (index, unit) in units.enumerated() where perUnit[index] > 0 && stat.excludes(pageID: unit.pageID, entryID: unit.entryID) {
+                excludedCount += perUnit[index]
+                perUnit[index] = 0
+            }
+        }
         let hits = zip(units, perUnit).filter { $0.1 > 0 }
         let undated = zip(units, perUnit).reduce(0) { $0 + (Self.dayNumber($1.0) == nil ? $1.1 : 0) }
         let term = TermResult(display: stat.name, total: perUnit.reduce(0, +),
@@ -105,9 +175,10 @@ extension AnalysisSnapshot {
             let (snippet, highlight) = Self.snippet(of: shown[index] ?? [], in: unit.body)
             return TermMatch(id: "\(index)", pageID: unit.pageID, pageNumber: unit.pageNumber,
                              journalName: multipleJournals ? journalNames[unit.journalID] : nil,
-                             date: unit.date, count: perUnit[index], snippet: snippet, highlight: highlight)
+                             date: unit.date, count: perUnit[index], snippet: snippet, highlight: highlight,
+                             entryID: unit.entryID)
         }
-        return StatResult(term: term, matches: matches)
+        return StatResult(term: term, matches: matches, excludedCount: excludedCount)
     }
 
     /// A phrase's word keys; a word ending in * is kept as a prefix ("cry*").
@@ -297,7 +368,7 @@ public struct StatCounter: Sendable {
             ten, copied exactly from your transcription. Use an empty list when there are none.
             """
         for (index, stat) in stats.enumerated() {
-            text += "\n- s\(index + 1), \(stat.name): \(stat.criteria)"
+            text += "\n- s\(index + 1), \(stat.name): \(stat.criteriaWithNotes)"
         }
         return text
     }
@@ -339,7 +410,7 @@ public struct StatCounter: Sendable {
     /// Counts one stat on a batch of pages' text. Returns quotes for every counted page, empty where none.
     public func count(_ stat: CustomStat, pages: [StatPageText]) async throws -> [UUID: [String]] {
         var keys: [String: UUID] = [:]
-        var text = "Stat: \(stat.name)\nQuestion: \(stat.question)\nWhat counts: \(stat.criteria)\n"
+        var text = "Stat: \(stat.name)\nQuestion: \(stat.question)\nWhat counts: \(stat.criteriaWithNotes)\n"
         for (index, page) in pages.enumerated() {
             let key = "P\(index + 1)"
             if !page.context { keys[key] = page.pageID }

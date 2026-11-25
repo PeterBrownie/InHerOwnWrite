@@ -6,6 +6,16 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 51 (November 25, 2026)
+
+- **Leave an entry out of a stat.** Each place a stat was found has a **⋯** menu with **Exclude** and
+  **Exclude with Reason…**. A reason, such as "Sam is my brother", becomes a note Claude is given whenever
+  it counts that stat, with an offer to count every page again. **Left out** lists what you excluded, each
+  with **Include Again**, and a stat's **Edit…** sheet has **Notes for Claude**.
+- **Editing a stat keeps what you left out.**
+- **Analysis by date.** **Only entries dated** in the Include column limits everything in Analysis, your
+  stats included, to entries between two dates. Entries without a full date are left out while it's on.
+
 ## Build 50 (November 25, 2026)
 
 - **Counting a stat with Claude now saves what it finds.** In the installed app, counting stopped after

@@ -70,6 +70,9 @@ private struct CustomStatDetail: View {
     @ViewState private var confirmCount = false
     @ViewState private var confirmDelete = false
     @ViewState private var confirmRecount = false
+    /// The match she's giving a reason to leave out.
+    @ViewState private var excluding: TermMatch?
+    @ViewState private var showExcluded = false
 
     private static let matchLimit = 5
 
@@ -104,7 +107,14 @@ private struct CustomStatDetail: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if stat.method == .reading, !stat.notes.isEmpty {
+                Text("Your notes for Claude: " + stat.notes.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             countingStatus(waiting: waiting.count)
+            recountSuggestion
 
             if term.total > 0 {
                 HStack {
@@ -136,6 +146,7 @@ private struct CustomStatDetail: View {
             } else if waiting.isEmpty, model.statCounting[stat.id] == nil {
                 Text("None found in the selected pages.").foregroundStyle(.secondary)
             }
+            if !stat.exclusions.isEmpty { excludedList }
         }
         .padding(14)
         .background(Theme.paper.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
@@ -151,10 +162,72 @@ private struct CustomStatDetail: View {
         } message: {
             Text("The text of every read page is sent to Anthropic and counted again. Photos aren't sent.")
         }
+        .sheet(item: $excluding) { match in
+            ExcludeReasonSheet(stat: stat, match: match)
+                .environmentObject(model)
+        }
         .confirmationDialog("Delete “\(stat.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Stat", role: .destructive, action: onDelete)
         } message: {
             Text("Its counts are removed. The pages aren't changed.")
+        }
+    }
+
+    /// Offered after she adds a note, so Claude reads every page again with it.
+    @ViewBuilder
+    private var recountSuggestion: some View {
+        if stat.method == .reading, stat.recountSuggested, model.statCounting[stat.id] == nil {
+            HStack {
+                Label("Count every page again so Claude reads them with your notes?", systemImage: "arrow.clockwise.circle")
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Not Now") { model.dismissRecountSuggestion(stat.id) }
+                Button("Count Again…") { confirmRecount = true }
+                    .disabled(!model.hasAPIKey)
+                    .help(model.hasAPIKey ? "Sends the pages' text, not their photos" : "Add an API key in Settings first")
+            }
+            .font(.callout)
+            .padding(10)
+            .background(Theme.notice, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    /// The entries she left out, each of which can be counted again.
+    private var excludedList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                showExcluded.toggle()
+            } label: {
+                Label("Left out (\(stat.exclusions.count))", systemImage: showExcluded ? "chevron.down" : "chevron.right")
+                    .font(.callout)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            if showExcluded {
+                ForEach(stat.exclusions) { exclusion in
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(exclusion.date ?? "Undated").font(.callout.weight(.semibold))
+                                Text("p. \(exclusion.pageNumber)").font(.callout).foregroundStyle(.secondary)
+                            }
+                            Text(exclusion.snippet)
+                                .font(.callout)
+                                .lineLimit(2)
+                                .foregroundStyle(.secondary)
+                            if let reason = exclusion.reason {
+                                Text("Why: \(reason)").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        Button("Include Again") { model.includeAgain(exclusion, in: stat.id) }
+                            .controlSize(.small)
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 10)
+                    .background(Theme.paper.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
         }
     }
 
@@ -213,11 +286,25 @@ private struct CustomStatDetail: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("Where it was found").font(.headline).padding(.top, 6)
             ForEach(shown) { match in
-                Button { model.openPage(match.pageID, highlight: match.highlightedText) } label: {
-                    MatchRow(match: match, color: nil)
+                HStack(alignment: .top, spacing: 4) {
+                    Button { model.openPage(match.pageID, highlight: match.highlightedText) } label: {
+                        MatchRow(match: match, color: nil)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open page \(match.pageNumber)")
+                    Menu {
+                        Button("Exclude") { model.exclude(match, from: stat.id) }
+                        Button("Exclude with Reason…") { excluding = match }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .padding(.top, 8)
+                    .disabled(match.entryID == nil)
+                    .help("Leave this out of the count")
                 }
-                .buttonStyle(.plain)
-                .help("Open page \(match.pageNumber)")
             }
             if matches.count > Self.matchLimit {
                 Button(showAll ? "Show Fewer" : "Show All \(matches.count)") { showAll.toggle() }
@@ -245,6 +332,7 @@ public struct StatEditorSheet: View {
     @ViewState private var unit = "times"
     @ViewState private var criteria = ""
     @ViewState private var wordsText = ""
+    @ViewState private var notesText = ""
     @ViewState private var method = CustomStat.Method.reading
     @ViewState private var isPlanning = false
     @ViewState private var planned = false
@@ -310,7 +398,7 @@ public struct StatEditorSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 520, height: showsFields ? 600 : 300)
+        .frame(width: 520, height: showsFields ? 700 : 300)
         .background(Theme.card)
         .onAppear(perform: load)
     }
@@ -356,6 +444,16 @@ public struct StatEditorSheet: View {
                         .lineLimit(3...6)
                         .textFieldStyle(.roundedBorder)
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Notes for Claude").font(.subheadline.weight(.medium))
+                    TextField("Sam is my brother.", text: $notesText, axis: .vertical)
+                        .lineLimit(2...4)
+                        .textFieldStyle(.roundedBorder)
+                    Text("One per line. Things Claude should know when counting, such as who someone is. Reasons you give for leaving an entry out are added here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Words").font(.subheadline.weight(.medium))
@@ -379,6 +477,7 @@ public struct StatEditorSheet: View {
             unit = existing.unit
             criteria = existing.criteria
             wordsText = existing.words.joined(separator: ", ")
+            notesText = existing.notes.joined(separator: "\n")
             method = existing.method
         } else if !model.hasAPIKey {
             method = .words
@@ -408,15 +507,80 @@ public struct StatEditorSheet: View {
 
     private func save() {
         guard canSave else { return }
-        let stat = CustomStat(id: existing?.id ?? UUID(),
-                              name: name.trimmingCharacters(in: .whitespaces),
-                              question: question.trimmingCharacters(in: .whitespacesAndNewlines),
-                              criteria: criteria.trimmingCharacters(in: .whitespacesAndNewlines),
-                              method: method, words: words,
-                              unit: unit.trimmingCharacters(in: .whitespaces).isEmpty ? "times" : unit.trimmingCharacters(in: .whitespaces).lowercased())
+        let trimmedUnit = unit.trimmingCharacters(in: .whitespaces)
+        // Starting from the saved stat keeps what isn't edited here, such as the entries she left out.
+        var stat = existing ?? CustomStat(name: "", question: "", criteria: "", method: method, words: [])
+        stat.name = name.trimmingCharacters(in: .whitespaces)
+        stat.question = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        stat.criteria = criteria.trimmingCharacters(in: .whitespacesAndNewlines)
+        stat.method = method
+        stat.words = words
+        stat.unit = trimmedUnit.isEmpty ? "times" : trimmedUnit.lowercased()
+        stat.notes = notesText.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         model.saveStat(stat)
         if stat.method == .reading, existing == nil { model.countStat(stat.id) }
         onSave(stat)
         dismiss()
     }
+}
+
+/// Leaves one place out of a stat with a reason, such as "Sam is my brother". For a stat Claude counts, the
+/// reason becomes a note Claude is given when counting.
+private struct ExcludeReasonSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let stat: CustomStat
+    let match: TermMatch
+    @ViewState private var reason = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Leave This Out")
+                .font(.system(size: 22, weight: .semibold, design: .serif))
+            MatchRow(match: match, color: nil)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Why doesn't it count?").font(.subheadline.weight(.medium))
+                TextField("Sam is my brother, not a friend.", text: $reason, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
+                Text(stat.method == .reading
+                     ? "Claude is given this when counting “\(stat.name)”, so it can leave out others like it. You can count every page again with it afterward."
+                     : "Kept with this entry, so you remember why it was left out.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Exclude") {
+                    model.exclude(match, from: stat.id, reason: reason)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 480, height: 360)
+        .background(Theme.card)
+    }
+}
+
+/// The reason sheet on its own, for the rendered screenshots.
+public struct ExcludeReasonSheetPreview: View {
+    let stat: CustomStat
+    let match: TermMatch
+
+    public init(stat: CustomStat, match: TermMatch) {
+        self.stat = stat
+        self.match = match
+    }
+
+    public var body: some View { ExcludeReasonSheet(stat: stat, match: match) }
 }

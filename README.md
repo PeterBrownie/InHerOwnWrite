@@ -103,7 +103,8 @@ page. A page that can't be read keeps its photo and can be retried.
 - **Reading controls.** Show or hide the photo, show one page or two, and flip with ⌘[ and ⌘]. Accurate
   Line Breaks (View menu or Settings) shows lines as written; turn it off to read flowing paragraphs. Text
   can be edited either way; with line breaks off, each change is made to the text as written.
-- **Analysis.** Choose journals and page ranges, see top words (hide any you don't want), the names Claude
+- **Analysis.** Choose journals and page ranges, and if you like a range of dates (**Only entries dated**;
+  entries without a full date are left out while it's on), see top words (hide any you don't want), the names Claude
   found, and how often any word or name appears over time. Click a word, or type a word, name, or phrase, to look it up (a phrase is found even where the handwriting
   wraps between its words): below the chart,
   **Where it appears** lists each place with its date, page, journal (when there's more than one), and two
@@ -122,7 +123,10 @@ page. A page that can't be read keeps its photo and can be retried.
   never photos, a few pages at a time with the page before for context, and every page read by Claude
   after that is counted in the same request that reads it. A stat shows its total, the entries and pages
   it appears in, a chart over time, and where each instance was found. A page edited after it was counted
-  is counted again when you ask.
+  is counted again when you ask. Each place it was found has a **⋯** menu: **Exclude** leaves that entry
+  out, and **Exclude with Reason…** also keeps why ("Sam is my brother"). For a stat Claude counts, the
+  reason becomes a note Claude is given from then on, with an offer to count every page again; notes can
+  also be edited with the stat. **Left out** lists what you excluded, each with **Include Again**.
 
 ## Reading on this Mac (experimental)
 

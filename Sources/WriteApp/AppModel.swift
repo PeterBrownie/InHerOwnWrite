@@ -91,6 +91,8 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var hiddenWords: Set<String> = []
     @Published public var analysisExcludedJournals: Set<UUID> = []
     @Published public var analysisRanges: [UUID: String] = [:]
+    /// When set, Analysis counts only entries dated within it.
+    @Published public var analysisDateRange: ClosedRange<Date>?
 
     @Published public var appearance: AppearanceMode {
         didSet {
@@ -354,6 +356,7 @@ public final class AppModel: ObservableObject {
         showingAnalysis = false
         analysisExcludedJournals = []
         analysisRanges = [:]
+        analysisDateRange = nil
         searchText = ""
         analysisTerm = ""
         showUpload = false
@@ -913,15 +916,38 @@ public final class AppModel: ObservableObject {
         return included
     }
 
+    /// The chosen date range as day numbers, for the snapshot.
+    public var analysisDays: ClosedRange<Int>? {
+        guard let range = analysisDateRange else { return nil }
+        func day(_ date: Date) -> Int? {
+            let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+            guard let year = parts.year, let month = parts.month, let day = parts.day else { return nil }
+            return AnalysisSnapshot.dayNumber(year: year, month: month, day: day)
+        }
+        guard let first = day(range.lowerBound), let last = day(range.upperBound) else { return nil }
+        return min(first, last)...max(first, last)
+    }
+
+    /// The first and last dates written on entries with a full date, for starting a date range.
+    public var datedEntrySpan: ClosedRange<Date>? {
+        let dates = entries.compactMap { entry -> Date? in
+            guard let year = entry.year, let month = entry.month, let day = entry.day else { return nil }
+            return Calendar.current.date(from: DateComponents(year: year, month: month, day: day))
+        }
+        guard let first = dates.min(), let last = dates.max() else { return nil }
+        return first...last
+    }
+
     public func makeAnalysisSnapshot() async -> AnalysisSnapshot {
         let entries = entries
         let included = analysisPageIDs
+        let days = analysisDays
         let names = pages.filter { included.contains($0.id) }.flatMap { $0.structure?.names ?? [] }
         let journalNames = Dictionary(uniqueKeysWithValues: journals.map { ($0.id, $0.name) })
         let people = people
         return await Task.detached(priority: .userInitiated) {
             AnalysisSnapshot(entries: entries, includedPages: included, names: names, people: people,
-                             journalNames: journalNames)
+                             journalNames: journalNames, days: days)
         }.value
     }
 

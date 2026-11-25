@@ -53,6 +53,37 @@ func runCustomStatChecks() async throws {
     check("a snippet with no words to find shows the start", AnalysisSnapshot.snippet(of: [], in: "Some words.").1 == nil
           && AnalysisSnapshot.snippet(of: [], in: "").0.isEmpty)
 
+    // Leaving an entry out, and notes for Claude.
+    var trimmed = reading
+    let firstMatch = found.matches.first { $0.pageID == pages[0].id }!
+    trimmed.exclusions = [StatExclusion(pageID: firstMatch.pageID, entryID: firstMatch.entryID!, pageNumber: 1,
+                                        date: firstMatch.date, snippet: firstMatch.snippet, reason: "Not about me")]
+    let left = snapshot.result(for: trimmed, findings: [
+        pages[0].id: ["I cried at lunch"],
+        pages[1].id: ["broke down after the call", "a quote that isn't on the page"],
+    ])
+    check("an excluded entry isn't counted", left.term.total == 2 && left.excludedCount == 1
+          && !left.matches.contains { $0.pageID == pages[0].id })
+    let worded = snapshot.result(for: CustomStat(name: "Cry Count", question: "", criteria: "", method: .words,
+                                                 words: ["cried"]), findings: [:])
+    var wordsLeft = CustomStat(name: "Cry Count", question: "", criteria: "", method: .words, words: ["cried"])
+    wordsLeft.exclusions = [StatExclusion(pageID: worded.matches[0].pageID, entryID: worded.matches[0].entryID!,
+                                          pageNumber: 1, date: nil, snippet: "", reason: nil)]
+    check("an excluded entry isn't counted by words either",
+          snapshot.result(for: wordsLeft, findings: [:]).term.total == worded.term.total - worded.matches[0].count)
+    let old = #"{"id":"\#(UUID().uuidString)","name":"Old","question":"q","criteria":"c","method":"reading","words":[],"unit":"times"}"#
+    let decoded = try? JSONDecoder().decode(CustomStat.self, from: Data(old.utf8))
+    check("a stat saved before notes still opens", decoded?.notes == [] && decoded?.exclusions == [] && decoded?.recountSuggested == false)
+    var noted = reading
+    noted.notes = ["Sam is my brother"]
+    check("notes go along with the criteria", noted.criteriaWithNotes == "Each time I cried. Notes from the writer: Sam is my brother.")
+
+    // Only entries in a date range.
+    let january = AnalysisSnapshot.dayNumber(year: 2026, month: 1, day: 1)!...AnalysisSnapshot.dayNumber(year: 2026, month: 1, day: 31)!
+    let dated = AnalysisSnapshot(entries: entries, includedPages: Set(pages.map(\.id)), names: [], journalNames: [:], days: january)
+    check("a date range keeps only entries dated in it", dated.result(for: words, findings: [:]).term.total == 1
+          && dated.result(for: words, findings: [:]).matches.allSatisfy { $0.pageID == pages[0].id })
+
     let finding = StatFinding(quotes: ["x"], text: "page text")
     check("a finding knows the text it was counted on", finding.matches("page text") && !finding.matches("page text, edited"))
 
@@ -97,13 +128,23 @@ func runCustomStatChecks() async throws {
         check("the count schema follows structured output rules", format.map { schemaIsStrict($0["schema"]!) } ?? false)
     }
 
+    var notedStat = reading
+    notedStat.notes = ["Sam is my brother"]
+    StubAPI.requests = []
+    StubAPI.replies = [(200, [:], rawReply(#"{"pages":[]}"#))]
+    _ = try await counter.count(notedStat, pages: [target])
+    if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
+        let content = (json["messages"] as? [[String: Any]])?.first?["content"] as? String ?? ""
+        check("counting is given her notes", content.contains("Notes from the writer: Sam is my brother."))
+    }
+
     // Counted while a page is read.
     let jpeg = try PagePhoto.prepare(syntheticPhoto())
     let pageJSON: [String: Any] = ["transcription": "Dear diary, I cried.", "entries": [], "names": [],
                                    "stats": ["s1": [["quote": "I cried"]]]]
     StubAPI.requests = []
     StubAPI.replies = [(200, [:], rawReply(String(data: try JSONSerialization.data(withJSONObject: pageJSON), encoding: .utf8)!))]
-    let read = try await transcriber.transcribe(photo: jpeg, stats: [reading])
+    let read = try await transcriber.transcribe(photo: jpeg, stats: [noted])
     check("a reading counts stats in the same request", read.statQuotes[reading.id] == ["I cried"])
     if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
         let format = (json["output_config"] as? [String: Any])?["format"] as? [String: Any]
@@ -114,6 +155,7 @@ func runCustomStatChecks() async throws {
               && schemaIsStrict(schema ?? [:]))
         let content = ((json["messages"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []
         check("the reading says what counts", (content.last?["text"] as? String)?.contains("Each time I cried.") == true)
+        check("a page reading is given her notes", (content.last?["text"] as? String)?.contains("Sam is my brother.") == true)
     }
 
     // What the vault keeps.
@@ -261,5 +303,28 @@ func runStatCountingChecks() async throws {
     check("counting is sent in batches", StatStubAPI.countRequests >= 3)
     check("every page is counted", model.pagesToCount(stat).isEmpty
           && model.statFindings(stat).count == total)
+
+    // Leaving an entry out with a reason.
+    let analysis = await model.makeAnalysisSnapshot()
+    if let saved = model.customStats.first(where: { $0.id == stat.id }),
+       let match = analysis.result(for: saved, findings: model.statFindings(saved)).matches.first {
+        model.exclude(match, from: stat.id, reason: "Sam is my brother")
+        let after = model.customStats.first { $0.id == stat.id }
+        check("a reason becomes a note for Claude", after?.notes == ["Sam is my brother"] && after?.exclusions.count == 1)
+        check("a new note offers counting again", after?.recountSuggested == true)
+        check("the entry is left out of the count",
+              analysis.result(for: after!, findings: model.statFindings(after!)).excludedCount == 1)
+        var renamed = after!
+        renamed.name = "Friend Talk"
+        model.saveStat(renamed)
+        check("editing a stat keeps what was left out", model.customStats.first { $0.id == stat.id }?.exclusions.count == 1
+              && model.pagesToCount(stat).isEmpty)
+        model.dismissRecountSuggestion(stat.id)
+        check("the offer can be put off", model.customStats.first { $0.id == stat.id }?.recountSuggested == false)
+        model.includeAgain(after!.exclusions[0], in: stat.id)
+        check("a left-out entry can be counted again", model.customStats.first { $0.id == stat.id }?.exclusions.isEmpty == true)
+    } else {
+        check("a counted stat lists where it was found", false)
+    }
     model.lock()
 }
