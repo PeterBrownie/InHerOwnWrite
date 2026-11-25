@@ -247,11 +247,29 @@ Not started. Listed so they aren't forgotten.
   missing or extra letter actually occur.
 - **Try the ink tint on joined-up cursive.** It was checked on neat printing and on messy unruled writing;
   cursive word boxes may be looser.
-- **More analysis of entries.** Suggested alongside the Entries section (counts, per month and week,
-  averages, longest gap), waiting for a choice: which weekdays she writes most; time of day, from the times
-  already read in date headings; streaks of consecutive days, longest and current; entry length over time
-  and the longest entries; "on this day" in earlier years; when each name first appears and who comes up
-  most each month; words and pages written per month.
+- **More analysis of entries** (approved for later, November 24, 2026), alongside the Entries section:
+  - which weekdays she writes most;
+  - time of day, from the times already read in date headings;
+  - streaks of consecutive days with an entry, the longest and the current one;
+  - entry length over time (average words per entry by month) and the longest entries;
+  - when each name first appears, and who comes up most each month;
+  - words and pages written per month.
+
+  Also suggested and not chosen: "on this day", entries from the same date in earlier years.
+- **Headings that are only a time.** Some entries start with a line that is just a time of day ("9:30 pm"),
+  meaning a new entry on the same day as the one before. `DateHeadingParser` needs a date, so such a line
+  isn't a heading now, and the writing after it is folded into the previous entry. It should start a new
+  entry that takes its date from the previous entry, as a missing year is taken from nearby entries, and
+  keeps its own time. A time alone is riskier than a date to treat as a heading: a line in the middle of an
+  entry can be just a time, so it may need to stand alone with a blank line or the end of an entry before
+  it. Claude's markers would need the same rule.
+- **Ripped-out pages.** Pages are sometimes torn out, so the notebook's printed page numbers skip. When the
+  page being viewed has a previous or next page whose number skips, show a small control that opens a
+  simple menu to say that one or more pages were ripped out there. It should stay quiet: nothing in the
+  journal marks a ripped page; she just sees the page numbers skip. Saying pages were ripped out also
+  matters for entries: an entry now continues onto the next page only when the numbers follow on
+  (`EntryBuilder`), so a ripped page cuts an entry in two and its second half shows as "Continued from an
+  earlier page". A known gap should be treated as following on.
 - **Two pages with different heights.** A photo of both pages is cut with one frame around both, split at
   the fold. When one page sits much higher than the other, each page's top and bottom could be found
   separately instead.
