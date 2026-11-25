@@ -272,10 +272,20 @@ Not started. Listed so they aren't forgotten.
 - **Two pages with different heights.** A photo of both pages is cut with one frame around both, split at
   the fold. When one page sits much higher than the other, each page's top and bottom could be found
   separately instead.
+- **Change an entry's date and time** (asked for November 24, 2026, not yet built). An entry already read
+  should be able to take a new date and time by hand, especially those that began with a time-only heading
+  and were folded into the entry before. Entries come from date lines in the page text (`EntryBuilder`), so
+  the change would rewrite the entry's heading line, or insert one at its first part's `startLine`.
 - **Scroll the photo to an outlined word.** When the photo pane is zoomed in, clicking a marked word outlines
   it but doesn't scroll it into view.
 
 ## Known issues
+
+- **The right page's number isn't read on photos of both pages** (asked to fix November 24, 2026). On both
+  approved two-page test photos, `PageScan.analyzeSpread` found a left number and no right one, and the
+  left number differed between the two lighting conditions (a digit lost in one). Saving still gives the
+  right page the left page's number plus one, so a wrong left number makes both wrong. The probe didn't turn
+  the photos first as the app does, so start by repeating it after `orientation(jpeg:)`.
 
 - **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame, removing
   and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink
