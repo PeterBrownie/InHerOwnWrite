@@ -209,7 +209,7 @@ public struct AnalysisDetail: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Type a word or name; separate several with commas", text: $model.analysisTerm)
+                TextField("Type a word, name, or phrase; separate several with commas", text: $model.analysisTerm)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
                 if !term.isEmpty {

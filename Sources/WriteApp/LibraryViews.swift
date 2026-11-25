@@ -39,7 +39,7 @@ public struct LibraryView: View {
                 if updater.showsBanner { UpdateBanner(updater: updater) }
             }
         }
-        .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all journals")
+        .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search for a word or phrase")
         .onChange(of: model.searchText) { _, text in
             if !text.isEmpty { model.showingAnalysis = false }
         }

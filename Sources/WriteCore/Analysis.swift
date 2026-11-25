@@ -49,6 +49,23 @@ public enum WordTokenizer {
     }
 }
 
+/// Finds a word or phrase in page text, wherever the handwriting's lines happen to break.
+public enum TextSearch {
+    /// Case, accents, curly apostrophes, and runs of spaces or line breaks don't matter, and part of a word
+    /// still matches ("walk" finds "walked").
+    public static func contains(_ text: String, _ query: String) -> Bool {
+        let needle = normalized(query)
+        guard !needle.isEmpty else { return false }
+        return normalized(text).range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+
+    static func normalized(_ text: String) -> String {
+        text.replacingOccurrences(of: "’", with: "'")
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
+    }
+}
+
 public enum CommonWords {
     public static let all: Set<String> = Set("""
         a about above after again against all also am an and any are aren't as at be because been before being below \

@@ -323,8 +323,7 @@ public final class AppModel: ObservableObject {
     }
 
     private func matchesSearch(_ text: String) -> Bool {
-        text.range(of: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
-                   options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        TextSearch.contains(text, searchText)
     }
 
     public var visiblePages: [PageInfo] {

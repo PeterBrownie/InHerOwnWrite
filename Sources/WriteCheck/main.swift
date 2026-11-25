@@ -352,6 +352,10 @@ func runEntryChecks() {
                                                    + String(repeating: " straw", count: 60))
     check("cuts long snippets around the word", cut.hasPrefix("…") && cut.hasSuffix("…") && cut.count < 200
           && cutRange.map { String(Array(cut)[$0]) } == "needle")
+    check("searches for a phrase across a line break", TextSearch.contains("we went\nhome early", "Went  home")
+          && TextSearch.contains("Theo’s cafe", "theo's café") && !TextSearch.contains("went out", "went home")
+          && !TextSearch.contains("anything", "  "))
+    check("looks up a phrase across lines and punctuation", snapshot.matches("body, b").count == 2)
     check("compares several words", snapshot.terms("body, Body B, ").map(\.total) == [4, 2])
     check("names only count when present", snapshot.nameStats(hidden: []).map(\.key) == ["body"])
     let onlyPage4 = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:])
