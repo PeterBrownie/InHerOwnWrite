@@ -516,37 +516,59 @@ struct TranscriptWord: View {
 struct WordFlow: Layout {
     var spacing: CGFloat = 4
     var rowSpacing: CGFloat = 2
+    /// When the items need more than one row, share them out evenly (seven tiles go four and three) instead
+    /// of filling each row before starting the next.
+    var balanced = false
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0 && x + size.width > width {
-                y += rowHeight + rowSpacing
-                x = 0
-                rowHeight = 0
-            }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-            widest = max(widest, x - spacing)
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let rows = self.rows(sizes, width: proposal.width ?? .infinity)
+        var height: CGFloat = 0, widest: CGFloat = 0
+        for (index, row) in rows.enumerated() {
+            widest = max(widest, width(of: row, sizes))
+            height += row.map { sizes[$0].height }.max() ?? 0
+            if index > 0 { height += rowSpacing }
         }
-        return CGSize(width: min(widest, width), height: y + rowHeight)
+        return CGSize(width: min(widest, proposal.width ?? .infinity), height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX && x + size.width > bounds.maxX {
-                y += rowHeight + rowSpacing
-                x = bounds.minX
-                rowHeight = 0
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var y = bounds.minY
+        for row in rows(sizes, width: bounds.width) {
+            var x = bounds.minX
+            for index in row {
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sizes[index]))
+                x += sizes[index].width + spacing
             }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
+            y += (row.map { sizes[$0].height }.max() ?? 0) + rowSpacing
         }
+    }
+
+    private func width(of row: [Int], _ sizes: [CGSize]) -> CGFloat {
+        row.reduce(0) { $0 + sizes[$1].width } + spacing * CGFloat(max(row.count - 1, 0))
+    }
+
+    /// The items in each row, in order.
+    private func rows(_ sizes: [CGSize], width: CGFloat) -> [[Int]] {
+        var filled: [[Int]] = []
+        for index in sizes.indices {
+            if let last = filled.last, !last.isEmpty, self.width(of: last + [index], sizes) <= width {
+                filled[filled.count - 1].append(index)
+            } else {
+                filled.append([index])
+            }
+        }
+        guard balanced, filled.count > 1 else { return filled }
+        // As few rows as filling needs, with the same number of items in each (the last may have fewer),
+        // taking more rows only if some row would be too wide.
+        var perRow = (sizes.count + filled.count - 1) / filled.count
+        while perRow > 1 {
+            let even = stride(from: 0, to: sizes.count, by: perRow).map { Array($0..<min($0 + perRow, sizes.count)) }
+            if even.allSatisfy({ self.width(of: $0, sizes) <= width }) { return even }
+            perRow -= 1
+        }
+        return filled
     }
 }
 

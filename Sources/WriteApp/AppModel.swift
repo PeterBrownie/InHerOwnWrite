@@ -41,6 +41,8 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var deviceUnlockMethod: String?
     @Published public private(set) var journals: [JournalInfo] = []
     @Published public private(set) var pages: [PageInfo] = []
+    /// Who the names on each page mean, across every journal; rebuilt whenever pages change.
+    @Published public private(set) var people = PeopleDirectory(pages: [])
     @Published public internal(set) var texts: [UUID: String] = [:]
     @Published public private(set) var entries: [JournalEntry] = []
     @Published public private(set) var contentVersion = 0
@@ -606,6 +608,11 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// Says who a name written on a page means ("Hannah" → "Hannah K."); nil or the name as written forgets it.
+    public func setPerson(pageID: UUID, written: String, person: String?) {
+        attempt { try $0.setPerson(pageID: pageID, written: written, person: person) }
+    }
+
     public func deletePage(id: UUID) {
         guard let vault else { return }
         do {
@@ -801,6 +808,7 @@ public final class AppModel: ObservableObject {
         guard let vault else { return }
         journals = try vault.journals()
         pages = try vault.pages()
+        people = PeopleDirectory(pages: pages)
         pagesWithProgress = (try? vault.pagesWithProgress()) ?? []
         let currentTexts = texts
         entries = EntryBuilder.build(pages: pages, journalOrder: journals.map(\.id)) { currentTexts[$0] ?? "" }

@@ -275,10 +275,9 @@ Not started. Listed so they aren't forgotten.
   partly built). Built: `PeopleDirectory` (`Sources/WriteCore/People.swift`) works out who each name on a
   page means; `PageStructure.people` stores her choice for a page ("Hannah" → "Hannah K."), kept when the
   page is read again; `Vault.setPerson` saves it. A bare first name is "unsure which" once two or more
-  people with that first name are known (from her choices or names written in full). Still to do:
-  - a button in the page footer (`PageColumn.pageFooter` in `ReaderViews.swift`) reading "2 people" (the
-    count of names on the page), with an exclamation mark when one is unsure, opening a list where each
-    name can be given a last name or initial, or matched to one of the people it could be;
+  people with that first name are known (from her choices or names written in full). The page footer's
+  **2 people** button (`PeopleButton` and `PeopleOnPage` in `ReaderViews.swift`) lists the names, marks an
+  unsure one, and lets each be given a fuller name or matched to someone known. Still to do:
   - Analysis counting each person through those choices (`AnalysisSnapshot.nameStats`), with unsure
     mentions shown as "Hannah (unsure which)", and clicking a person like "Hannah K." finding the pages
     chosen for them, since that label isn't in the text.
@@ -289,7 +288,7 @@ Not started. Listed so they aren't forgotten.
 
 ## Known issues
 
-- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), removing
+- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button, removing
   and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink
   tint, adding both pages from one photo, and dropping several photos at once. They pass
   `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked

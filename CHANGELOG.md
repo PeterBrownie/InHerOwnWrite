@@ -6,11 +6,20 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
-## Build 37 (November 24, 2026)
+## Build 38 (November 24, 2026)
 
+- **Say who a name means.** A page's footer now shows how many people it names, like **2 people**, with an
+  orange mark when a first name could mean more than one person. Click it to give each name a last name or
+  initial ("Hannah K."), or pick someone already known by that first name. Analysis doesn't count people by
+  these choices yet.
 - **Crop edges no longer get stuck after straightening.** When a page is turned with **Straighten**, you can
   keep dragging an edge or corner of the crop outward; the turn eases toward level just enough to make room,
   and the Straighten slider follows. Drag back in before letting go to get the turn back.
+- In Analysis, the words and names you've chosen are tinted in the **Top words** and **Names** lists, in their
+  chart colors when comparing several, so you can see what's selected without scrolling up.
+- The **Usual time over time** chart puts earlier times at the top.
+- Hovering a point on an over-time chart no longer covers the line: the details sit above or below it.
+- When the Entries stats need two rows, they split evenly instead of leaving one on its own.
 
 ## Build 36 (November 24, 2026)
 

@@ -698,6 +698,18 @@ func runRender(output: URL, sample: URL?) async throws {
     model.accent = .clay
     model.analysisTerm = ""
     model.showingAnalysis = false
+    // The people on a page, with one first name shared by two people.
+    func namedPage(_ names: [String], people: [String: String]? = nil) -> PageInfo {
+        var structure = PageStructure(markers: [], names: names, text: "")
+        structure.people = people
+        return PageInfo(id: UUID(), journalID: UUID(), number: 12, status: .done, problem: nil, wasCutOff: false,
+                        createdAt: Date(), updatedAt: Date(), structure: structure)
+    }
+    let shown = namedPage(["Wren", "Theo", "Marguerite"])
+    let knownPeople = PeopleDirectory(pages: [shown, namedPage(["Wren"], people: ["wren": "Wren K."]),
+                                            namedPage(["Wren Abbott"])])
+    await render(PeopleOnPage(page: shown, people: knownPeople).environmentObject(model), size: CGSize(width: 380, height: 300),
+                 to: output.appendingPathComponent("3e-people-on-page.png"))
     model.setLibraryMode(.pages)
     await render(UploadSheet().environmentObject(model), size: CGSize(width: 760, height: 560),
                  to: output.appendingPathComponent("4-upload.png"))

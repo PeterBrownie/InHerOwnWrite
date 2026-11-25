@@ -108,6 +108,143 @@ struct PageReader: View {
     }
 }
 
+/// "2 people" in a page's footer: the names on the page, with a mark when one could mean more than one
+/// person. Clicking it lists them, so each can be told apart with a last name or initial.
+private struct PeopleButton: View {
+    @EnvironmentObject private var model: AppModel
+    let page: PageInfo
+    @ViewState private var isShowing = false
+
+    var body: some View {
+        let people = model.people.people(on: page)
+        if !people.isEmpty {
+            let unsure = people.contains { $0.resolution.isUnsure }
+            Button { isShowing.toggle() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "person.2")
+                    Text(people.count == 1 ? "1 person" : "\(people.count) people")
+                    if unsure {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                    }
+                }
+            }
+            .controlSize(.small)
+            .help(unsure ? "A name on this page could mean more than one person; click to say which"
+                         : "The people named on this page, and who each name means")
+            .popover(isPresented: $isShowing, arrowEdge: .top) {
+                PeopleOnPage(page: page, people: model.people).environmentObject(model)
+            }
+        }
+    }
+}
+
+/// The names on one page, each with who it means. A name can be given a last name or initial ("Hannah K."), or
+/// matched to someone already known by one, so two people who share a first name are counted apart.
+public struct PeopleOnPage: View {
+    let page: PageInfo
+    let directory: PeopleDirectory
+
+    public init(page: PageInfo, people: PeopleDirectory) {
+        self.page = page
+        directory = people
+    }
+
+    public var body: some View {
+        let people = directory.people(on: page)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("People on page \(page.number)").font(.headline)
+            Text("Who each name here means. To tell apart two people with the same first name, give each a last name or initial.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(people, id: \.written) { item in
+                        PersonRow(page: page, written: item.written, resolution: item.resolution,
+                                  choices: directory.people(sharingFirstNameWith: item.written))
+                    }
+                }
+            }
+            .frame(maxHeight: 360)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 380)
+    }
+}
+
+private struct PersonRow: View {
+    @EnvironmentObject private var model: AppModel
+    let page: PageInfo
+    let written: String
+    let resolution: PersonResolution
+    /// Others known by this first name.
+    let choices: [String]
+    @ViewState private var draft: String?
+
+    private var chosen: String? { page.structure?.people?[PeopleDirectory.key(written)] }
+
+    /// Saves who the name means; nil or an empty name goes back to the name as written.
+    private func save(_ person: String?) {
+        let trimmed = person?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let value = trimmed.isEmpty ? nil : trimmed
+        draft = nil
+        guard value != chosen else { return }
+        model.setPerson(pageID: page.id, written: written, person: value)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(written)
+                    .font(.system(size: 14, design: .serif))
+                    .lineLimit(1)
+                    .frame(width: 100, alignment: .leading)
+                Image(systemName: "arrow.right").font(.caption).foregroundStyle(.secondary)
+                TextField(written, text: Binding(get: { draft ?? chosen ?? "" }, set: { draft = $0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { if let draft { save(draft) } }
+                    .help("A fuller name for who \(written) means on this page, like \(written) K.; leave empty for just \(written)")
+                Menu {
+                    ForEach(choices, id: \.self) { choice in
+                        Toggle(choice, isOn: Binding(get: { chosen == choice }, set: { _ in save(choice) }))
+                    }
+                    if !choices.isEmpty { Divider() }
+                    Button("Just \(written)") { save(nil) }
+                        .disabled(chosen == nil)
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .opacity(choices.isEmpty && chosen == nil ? 0 : 1)
+                .disabled(choices.isEmpty && chosen == nil)
+                .help("Choose someone already known by this first name")
+            }
+            if case .unsure(_, let options) = resolution {
+                Label("Unsure which: \(Self.either(options))",
+                      systemImage: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(.leading, 108)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onDisappear { if let draft { save(draft) } }
+    }
+
+    private static func either(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return "more than one person"
+        case 1: return names[0]
+        case 2: return "\(names[0]) or \(names[1])"
+        default: return names.dropLast().joined(separator: ", ") + ", or " + names.last!
+        }
+    }
+}
+
 private struct PageColumn: View {
     @EnvironmentObject private var model: AppModel
     let page: PageInfo
@@ -172,6 +309,9 @@ private struct PageColumn: View {
                 Text("Reading…").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if page.status != .reading {
+                PeopleButton(page: page)
+            }
             if page.status != .done && page.status != .reading {
                 Button("Read Page") { model.readAgain(page.id) }
                     .controlSize(.small)

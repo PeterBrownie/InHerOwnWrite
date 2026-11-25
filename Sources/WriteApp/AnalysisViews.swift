@@ -137,6 +137,18 @@ public struct AnalysisDetail: View {
         }
     }
 
+    /// The words being looked up, by key, in the colors the charts above give them, so the lists can mark them.
+    private var chosenColors: [String: Color] {
+        let keys = AnalysisSnapshot.splitTerms(term)
+            .map { WordTokenizer.tokens(in: $0).map(\.key).joined(separator: " ") }
+            .filter { !$0.isEmpty }
+        var colors: [String: Color] = [:]
+        for (index, key) in keys.enumerated() where colors[key] == nil {
+            colors[key] = keys.count > 1 ? Theme.series(index) : Theme.accent
+        }
+        return colors
+    }
+
     private var key: SnapshotKey {
         SnapshotKey(version: model.contentVersion, pages: model.analysisPageIDs)
     }
@@ -361,8 +373,9 @@ public struct AnalysisDetail: View {
                     .fixedSize()
                 }
             }
-            // Tiles wrap onto a second row rather than squeezing a value like "10:00 PM" onto two lines.
-            WordFlow(spacing: 28, rowSpacing: 14) {
+            // Tiles wrap onto a second row rather than squeezing a value like "10:00 PM" onto two lines, and
+            // share the rows evenly rather than leaving one tile on its own.
+            WordFlow(spacing: 28, rowSpacing: 14, balanced: true) {
                 StatTile(label: "Entries", value: rhythm.entryCount)
                 if let perMonth = rhythm.perMonth, let perWeek = rhythm.perWeek {
                     trendTile(.perMonth, StatTile(label: "Average per month", value: perMonth.formatted(.number.precision(.fractionLength(1)))))
@@ -513,7 +526,7 @@ public struct AnalysisDetail: View {
             if shown.isEmpty {
                 Text("No words to show.").foregroundStyle(.secondary)
             }
-            WordRows(words: shown, maximum: shown.first?.count ?? 1) { select($0) }
+            WordRows(words: shown, maximum: shown.first?.count ?? 1, chosen: chosenColors) { select($0) }
             if words.count > Self.wordLimit {
                 Button(showAllWords ? "Show Fewer" : "Show More") { showAllWords.toggle() }
                     .buttonStyle(.link)
@@ -533,7 +546,8 @@ public struct AnalysisDetail: View {
             if names.isEmpty {
                 Text("No names yet.").foregroundStyle(.secondary)
             }
-            WordRows(words: Array(names.prefix(Self.wordLimit)), maximum: names.first?.count ?? 1) { select($0) }
+            WordRows(words: Array(names.prefix(Self.wordLimit)), maximum: names.first?.count ?? 1,
+                     chosen: chosenColors) { select($0) }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -633,7 +647,11 @@ private struct TrendChart: View {
             let ticks = self.ticks
             let low = ticks.first ?? 0
             let high = max(ticks.last ?? 1, low + 1e-9)
-            let y = { (value: Double) -> CGFloat in plot.maxY - plot.height * CGFloat((value - low) / (high - low)) }
+            // Times run down the chart, earliest at the top, the way a day reads; other figures rise.
+            let y = { (value: Double) -> CGFloat in
+                let share = CGFloat((value - low) / (high - low))
+                return isTime ? plot.minY + plot.height * share : plot.maxY - plot.height * share
+            }
 
             ZStack(alignment: .topLeading) {
                 Canvas { context, _ in
@@ -690,7 +708,7 @@ private struct TrendChart: View {
 
                 if let hovered, points.indices.contains(hovered) {
                     tooltip(points[hovered])
-                        .position(x: min(max(center(hovered, plot), plot.minX + 90), plot.maxX - 90), y: plot.minY + 24)
+                        .position(tooltipSpot(hovered, plot: plot, y: y))
                         .allowsHitTesting(false)
                 }
             }
@@ -711,6 +729,29 @@ private struct TrendChart: View {
         .accessibilityElement()
         .accessibilityLabel("Line chart over time")
         .accessibilityValue(points.filter { $0.value != nil }.map { "\($0.label): \($0.display)" }.joined(separator: ", "))
+    }
+
+    private let tooltipSize = CGSize(width: 180, height: 44)
+
+    /// Where the hover details go so they don't cover the line: above it or below it across the stretch they
+    /// span, whichever has room, or else beside the hovered point.
+    private func tooltipSpot(_ index: Int, plot: CGRect, y: (Double) -> CGFloat) -> CGPoint {
+        let half = tooltipSize.width / 2, gap: CGFloat = 8
+        let x = min(max(center(index, plot), plot.minX + half), plot.maxX - half)
+        // The line's highest and lowest points under the box, counting the segments that run into it.
+        let slot = plot.width / CGFloat(points.count)
+        let first = max(Int(((x - half - plot.minX) / slot).rounded(.down)) - 1, 0)
+        let last = min(Int(((x + half - plot.minX) / slot).rounded(.up)), points.count - 1)
+        let heights = (first...max(first, last)).compactMap { points[$0].value }.map(y)
+        let top = heights.min() ?? plot.maxY, bottom = heights.max() ?? plot.minY
+        let height = tooltipSize.height
+        if top - plot.minY >= height + gap { return CGPoint(x: x, y: top - gap - height / 2) }
+        if plot.maxY - bottom >= height + gap { return CGPoint(x: x, y: bottom + gap + height / 2) }
+        // No clear band: beside the point, on the side with more room, level with it.
+        let spot = center(index, plot)
+        let besideX = spot + 14 + half <= plot.maxX ? spot + 14 + half : max(spot - 14 - half, plot.minX + half)
+        let pointY = points[index].value.map(y) ?? plot.midY
+        return CGPoint(x: besideX, y: min(max(pointY, plot.minY + height / 2), plot.maxY - height / 2))
     }
 
     private func tooltip(_ point: TrendPoint) -> some View {
@@ -808,14 +849,19 @@ private struct WordRows: View {
     @EnvironmentObject private var model: AppModel
     let words: [WordStat]
     let maximum: Int
+    /// Words being looked up, marked in their chart colors.
+    var chosen: [String: Color] = [:]
     let onSelect: (String) -> Void
 
     var body: some View {
         VStack(spacing: 2) {
             ForEach(words) { word in
+                let color = chosen[word.key]
                 HStack(spacing: 8) {
                     Button { onSelect(word.display) } label: {
                         Text(word.display)
+                            .fontWeight(color == nil ? .regular : .semibold)
+                            .foregroundStyle(color ?? .primary)
                             .lineLimit(1)
                             .frame(width: 112, alignment: .leading)
                             .contentShape(Rectangle())
@@ -825,7 +871,7 @@ private struct WordRows: View {
 
                     GeometryReader { proxy in
                         UnevenRoundedRectangle(bottomTrailingRadius: 3, topTrailingRadius: 3)
-                            .fill(Theme.chart)
+                            .fill(color ?? Theme.chart)
                             .frame(width: max(2, proxy.size.width * CGFloat(word.count) / CGFloat(max(maximum, 1))),
                                    height: 8)
                             .frame(maxHeight: .infinity)
@@ -841,7 +887,11 @@ private struct WordRows: View {
                         .controlSize(.mini)
                         .help("Hide \(word.display) from these lists")
                 }
+                .padding(.horizontal, 6)
+                .background(color.map { $0.opacity(0.14) } ?? .clear, in: RoundedRectangle(cornerRadius: 5))
+                .padding(.horizontal, -6)
                 .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(color == nil ? [] : .isSelected)
             }
         }
     }
