@@ -147,7 +147,7 @@ process on 127.0.0.1 that stops when the app quits or locks.
 
 - Journal names, page numbers, photos, transcriptions, entry dates, names, hidden words, and the API key
   are encrypted with AES-256-GCM before they reach the database.
-- The encryption key comes from her password through PBKDF2-HMAC-SHA256 with 2,000,000 iterations.
+- The encryption key comes from the user's password through PBKDF2-HMAC-SHA256 with 2,000,000 iterations.
 - The app locks after 10 idle minutes, and when the Mac sleeps or the screen locks.
 - **Settings → Unlock with Touch ID** (or Apple Watch) opens the journal without the password. A key kept
   in the Mac's Secure Enclave, usable only after Touch ID or a nearby unlocked Apple Watch, wraps a copy of
