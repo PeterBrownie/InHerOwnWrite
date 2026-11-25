@@ -146,6 +146,12 @@ public struct EntryRhythm: Sendable {
     public let longestGap: Gap?
     public let first: String?
     public let last: String?
+    /// Dated entries by day of the week, Monday first.
+    public var byWeekday: [TimelineBin] = []
+    /// The longest run of consecutive days with an entry, as days and its first and last day.
+    public var longestStreak: Gap?
+    /// The run that ends today or yesterday; 0 when the last entry is older than that.
+    public var currentStreak = 0
 }
 
 public struct TermResult: Sendable {
@@ -412,7 +418,19 @@ public struct AnalysisSnapshot: Sendable {
 
         let distinct = Array(Set(dated.map(\.day))).sorted()
         let gap = zip(distinct, distinct.dropFirst()).max { ($0.1 - $0.0) < ($1.1 - $1.0) }
-        return EntryRhythm(
+
+        let weekdayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        let weekday = { (day: Int) -> Int in ((day + 3) % 7 + 7) % 7 }
+        let byWeekday = bins(index: weekday, count: 7) { (weekdayNames[$0], String(weekdayNames[$0].prefix(3))) }
+
+        var runs: [(start: Int, end: Int)] = []
+        for day in distinct {
+            if let last = runs.last, last.end == day - 1 { runs[runs.count - 1].end = day } else { runs.append((day, day)) }
+        }
+        let longest = runs.max { ($0.end - $0.start) < ($1.end - $1.start) }
+        let today = Self.dayNumber(Date())
+        let current = runs.last.map { $0.end >= today - 1 && $0.end <= today ? $0.end - $0.start + 1 : 0 } ?? 0
+        var rhythm = EntryRhythm(
             entryCount: entryCount,
             datedCount: dated.count,
             byMonth: byMonth,
@@ -423,6 +441,12 @@ public struct AnalysisSnapshot: Sendable {
             first: Self.label(day: firstDay),
             last: Self.label(day: lastDay)
         )
+        rhythm.byWeekday = byWeekday
+        rhythm.longestStreak = longest.map {
+            EntryRhythm.Gap(days: $0.end - $0.start + 1, from: Self.label(day: $0.start), to: Self.label(day: $0.end))
+        }
+        rhythm.currentStreak = current
+        return rhythm
     }
 
     /// "Feb 9, 2026", or "Feb 9".
@@ -541,6 +565,13 @@ public struct AnalysisSnapshot: Sendable {
               let date = calendar.date(from: DateComponents(year: year, month: month, day: day))
         else { return nil }
         return Int(date.timeIntervalSince1970 / 86_400)
+    }
+
+    /// Today, counted like entry dates.
+    static func dayNumber(_ date: Date) -> Int {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        guard let start = calendar.date(from: parts) else { return 0 }
+        return Int(start.timeIntervalSince1970 / 86_400)
     }
 
     private static func components(day: Int) -> (year: Int, month: Int, day: Int) {

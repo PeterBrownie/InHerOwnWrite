@@ -368,6 +368,10 @@ func runEntryChecks() {
     let spacedEntries = EntryBuilder.build(pages: spaced, journalOrder: [journal]) { spacedText[$0] ?? "" }
     let months = AnalysisSnapshot(entries: spacedEntries, includedPages: Set(spaced.map(\.id)), names: [], journalNames: [:])
         .entryRhythm()
+    // January 5 and March 2, 2026 are Mondays; January 6 and March 3 are Tuesdays; January 20 a Tuesday.
+    check("counts entries by weekday", months.byWeekday.map(\.count) == [2, 3, 0, 0, 0, 0, 0])
+    check("finds the longest streak", months.longestStreak?.days == 2 && months.longestStreak?.from == "Jan 5, 2026")
+    check("an old streak isn't current", months.currentStreak == 0)
     check("counts entries per month, empty months included", months.byMonth.map(\.count) == [3, 0, 2])
     check("counts entries per week from Monday", months.byWeek.count == 9 && months.byWeek.map(\.count) == [2, 0, 1, 0, 0, 0, 0, 0, 2]
           && months.byWeek.first?.label == "Week of Jan 5, 2026")

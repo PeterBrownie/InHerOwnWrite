@@ -91,7 +91,8 @@ page. A page that can't be read keeps its photo and can be retried.
   lines around it; click one to open the page. ⌘-click more words, or type them separated by commas, to
   compare them in one chart, each in its own color. **Entries** counts the entries, charts them per
   month or per week, averages both over the whole span from the first dated entry to the last, and shows
-  the longest gap between two entries.
+  the longest gap between two entries, the longest and current streaks of days in a row, and which days of
+  the week have the most entries.
 
 ## Reading on this Mac (experimental)
 

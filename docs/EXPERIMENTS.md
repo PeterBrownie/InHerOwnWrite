@@ -247,10 +247,9 @@ Not started. Listed so they aren't forgotten.
   missing or extra letter actually occur.
 - **Try the ink tint on joined-up cursive.** It was checked on neat printing and on messy unruled writing;
   cursive word boxes may be looser.
-- **More analysis of entries** (approved for later, November 24, 2026), alongside the Entries section:
-  - which weekdays she writes most;
+- **More analysis of entries** (approved for later, November 24, 2026), alongside the Entries section (which
+  weekdays and streaks are built):
   - time of day, from the times already read in date headings;
-  - streaks of consecutive days with an entry, the longest and the current one;
   - entry length over time (average words per entry by month) and the longest entries;
   - when each name first appears, and who comes up most each month;
   - words and pages written per month.

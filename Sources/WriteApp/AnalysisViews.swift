@@ -363,6 +363,12 @@ public struct AnalysisDetail: View {
                 if let gap = rhythm.longestGap {
                     StatTile(label: "Longest gap", value: count(gap.days, "day"), detail: "\(gap.from) to \(gap.to)")
                 }
+                if let streak = rhythm.longestStreak, streak.days > 1 {
+                    StatTile(label: "Longest streak", value: count(streak.days, "day"), detail: "\(streak.from) to \(streak.to)")
+                }
+                if rhythm.currentStreak > 1 {
+                    StatTile(label: "Current streak", value: count(rhythm.currentStreak, "day"))
+                }
                 Spacer()
             }
             if rhythm.datedCount == 0 {
@@ -372,6 +378,12 @@ public struct AnalysisDetail: View {
                 if bins.count >= 2 {
                     TimelineChart(series: [TimelineSeries(name: "entries", color: Theme.chart, bins: bins)], noun: ("entry", "entries"))
                         .frame(height: 180)
+                }
+                if rhythm.byWeekday.contains(where: { $0.count > 0 }) {
+                    Text("By day of the week").font(.subheadline.weight(.semibold)).padding(.top, 4)
+                    TimelineChart(series: [TimelineSeries(name: "entries by weekday", color: Theme.chart,
+                                                          bins: rhythm.byWeekday)], noun: ("entry", "entries"))
+                        .frame(height: 140)
                 }
                 Text(rhythmNote(rhythm))
                     .font(.caption)
