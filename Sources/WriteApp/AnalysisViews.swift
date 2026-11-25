@@ -579,7 +579,8 @@ public struct AnalysisDetail: View {
             if names.isEmpty {
                 Text("No names yet.").foregroundStyle(.secondary)
             }
-            WordRows(words: Array(names.prefix(Self.wordLimit)), maximum: names.first?.count ?? 1,
+            // Every name found, however many.
+            WordRows(words: names, maximum: names.first?.count ?? 1,
                      chosen: chosenColors, onRename: { renaming = $0 }) { select($0) }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)

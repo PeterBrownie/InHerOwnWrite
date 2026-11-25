@@ -360,7 +360,7 @@ public struct AnalysisSnapshot: Sendable {
     public func nameStats(hidden: Set<String>) -> [WordStat] {
         persons.compactMap { key, person -> WordStat? in
             let count = person.perUnit.reduce(0, +)
-            guard count > 0, !hidden.contains(key) else { return nil }
+            guard !hidden.contains(key) else { return nil }
             let pages = Set(zip(units, person.perUnit).filter { $0.1 > 0 }.map(\.0.pageID)).count
             return WordStat(key: key, display: person.display, count: count, pageCount: pages)
         }
@@ -400,6 +400,14 @@ public struct AnalysisSnapshot: Sendable {
                                                    written: [:])].perUnit[index] += count
                 persons[key]?.written[index, default: []].append(name.keys.joined(separator: " "))
             }
+        }
+        // Every name found stays in the list, even one with no mention in the entries' text, such as a name
+        // only in a heading.
+        let mentioned = Set(persons.values.flatMap { $0.written.values.flatMap { $0 } })
+        for name in written where !mentioned.contains(name.keys.joined(separator: " ")) {
+            let key = PeopleDirectory.key(name.name)
+            guard persons[key] == nil else { continue }
+            persons[key] = PersonCounts(display: name.name, perUnit: [Int](repeating: 0, count: units.count), written: [:])
         }
         return persons
     }

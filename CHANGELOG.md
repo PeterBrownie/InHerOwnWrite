@@ -6,6 +6,11 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 42 (November 24, 2026)
+
+- **Analysis lists every name.** The **Names** list no longer stops at 40, and a name found on a page now
+  stays in it even when it isn't in the entries' text (only in a heading, say), shown with 0 mentions.
+
 ## Build 41 (November 24, 2026)
 
 - **Searched words are highlighted where you read them.** After searching your journals, the words are

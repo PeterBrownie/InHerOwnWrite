@@ -393,7 +393,9 @@ func runEntryChecks() {
           && TextSearch.ranges(of: "HOME", in: foundText).count == 2 && TextSearch.ranges(of: " ", in: foundText).isEmpty)
     check("looks up a phrase across lines and punctuation", snapshot.matches("body, b").count == 2)
     check("compares several words", snapshot.terms("body, Body B, ").map(\.total) == [4, 2])
-    check("names only count when present", snapshot.nameStats(hidden: []).map(\.key) == ["body"])
+    let nameCounts = snapshot.nameStats(hidden: [])
+    check("every name found is listed, counting only its mentions",
+          nameCounts.map(\.key) == ["body", "nobody here"] && nameCounts.map(\.count) == [4, 0])
 
     // Two people with one first name: a page that only says "Wren" is unsure until she says which.
     func namedPage(_ names: [String], people: [String: String]? = nil) -> PageInfo {
