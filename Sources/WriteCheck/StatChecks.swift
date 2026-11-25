@@ -74,6 +74,7 @@ func runCustomStatChecks() async throws {
     check("plans a stat from the question", plan.name == "Cry Count" && plan.method == .words && plan.words == ["cried", "cry*"])
     if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
         let messages = json["messages"] as? [[String: Any]] ?? []
+        check("planning uses Sonnet", json["model"] as? String == "claude-sonnet-5-5")
         check("planning sends only the question", messages.count == 1 && messages[0]["content"] as? String == "How many times did I cry?")
         let format = (json["output_config"] as? [String: Any])?["format"] as? [String: Any]
         check("the plan schema follows structured output rules", format.map { schemaIsStrict($0["schema"]!) } ?? false)
@@ -89,6 +90,7 @@ func runCustomStatChecks() async throws {
     check("pages with nothing found are counted as none", result[quiet.pageID] == [])
     if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
         let content = (json["messages"] as? [[String: Any]])?.first?["content"] as? String ?? ""
+        check("counting uses Sonnet", json["model"] as? String == "claude-sonnet-5-5")
         check("counting sends text, not photos", content.contains("[P2] Page 2") && content.contains("(context only)")
               && !String(data: body, encoding: .utf8)!.contains("\"image\""))
         let format = (json["output_config"] as? [String: Any])?["format"] as? [String: Any]
@@ -106,6 +108,8 @@ func runCustomStatChecks() async throws {
     if let body = StubAPI.requests.last?.1, let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
         let format = (json["output_config"] as? [String: Any])?["format"] as? [String: Any]
         let schema = format?["schema"] as? [String: Any]
+        check("reading a photo with stats stays on Opus", json["model"] as? String == Transcriber.model
+              && Transcriber.model.hasPrefix("claude-opus"))
         check("the reading schema asks for each stat", (schema?["required"] as? [String])?.contains("stats") == true
               && schemaIsStrict(schema ?? [:]))
         let content = ((json["messages"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []

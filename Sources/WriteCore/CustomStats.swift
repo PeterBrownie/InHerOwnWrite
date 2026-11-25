@@ -174,6 +174,10 @@ public struct StatCounter: Sendable {
         self.transcriber = transcriber
     }
 
+    /// Planning and counting work from text alone, so they use Sonnet; reading a page photo, including the
+    /// stats counted along with it, stays on `Transcriber.model`.
+    public static let model = "claude-sonnet-5-5"
+
     /// About how much text goes in one counting request.
     public static let batchCharacters = 24_000
 
@@ -219,7 +223,7 @@ public struct StatCounter: Sendable {
     /// Suggests a stat for a question. Only the question is sent.
     public func plan(question: String) async throws -> StatPlan {
         let body: [String: Any] = [
-            "model": Transcriber.model,
+            "model": Self.model,
             "max_tokens": 4000,
             "output_config": [
                 "effort": "low",
@@ -346,7 +350,7 @@ public struct StatCounter: Sendable {
             "properties": ["pages": Self.findingsSchema()] as [String: Any],
         ]
         let body: [String: Any] = [
-            "model": Transcriber.model,
+            "model": Self.model,
             "max_tokens": 16000,
             "output_config": [
                 "effort": "medium",

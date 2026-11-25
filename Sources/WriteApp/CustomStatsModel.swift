@@ -123,31 +123,32 @@ extension AppModel {
         statCounting[id] = StatCountProgress(done: 0, total: needed.count, problem: nil)
 
         statTasks[id] = Task { [weak self] in
-            var next = 0
+            // Kept plain on purpose: an earlier version that added tasks from a nested function stopped
+            // quietly in release builds, with nothing saved and no error.
+            var waiting = batches[...]
             var failure: Error?
-            await withTaskGroup(of: (batch: [StatPageText], result: Result<[UUID: [String]], Error>).self) { group in
-                func start() {
-                    guard next < batches.count else { return }
-                    let batch = batches[next]
-                    next += 1
-                    group.addTask {
-                        do { return (batch, .success(try await counter.count(stat, pages: batch))) } catch { return (batch, .failure(error)) }
-                    }
+            await withTaskGroup(of: StatBatchOutcome.self) { group in
+                for _ in 0..<Self.concurrentReads {
+                    guard let batch = waiting.popFirst() else { break }
+                    group.addTask { await StatBatchOutcome(counter: counter, stat: stat, batch: batch) }
                 }
-                for _ in 0..<min(Self.concurrentReads, batches.count) { start() }
-                for await (batch, outcome) in group {
-                    guard let self, !Task.isCancelled, self.vault === vault else { return }
-                    switch outcome {
-                    case .success(let found):
-                        let texts = Dictionary(uniqueKeysWithValues: batch.map { ($0.pageID, $0.text) })
-                        for (pageID, quotes) in found {
-                            try? vault.setStatFindings(pageID: pageID, [id: StatFinding(quotes: quotes, text: texts[pageID] ?? "")])
-                        }
-                        self.statCounting[id]?.done += found.count
-                        if let updated = try? vault.pages() { self.pages = updated }
-                        if failure == nil { start() }
-                    case .failure(let error):
-                        if !(error is CancellationError) { failure = error }
+                while let outcome = await group.next() {
+                    if Task.isCancelled || self?.vault !== vault {
+                        group.cancelAll()
+                        continue
+                    }
+                    if let error = outcome.error {
+                        if !(error is CancellationError), failure == nil { failure = error }
+                        continue
+                    }
+                    let texts = Dictionary(outcome.batch.map { ($0.pageID, $0.text) }, uniquingKeysWith: { first, _ in first })
+                    for (pageID, quotes) in outcome.found {
+                        try? vault.setStatFindings(pageID: pageID, [id: StatFinding(quotes: quotes, text: texts[pageID] ?? "")])
+                    }
+                    self?.statCounting[id]?.done += outcome.found.count
+                    if let updated = try? vault.pages() { self?.pages = updated }
+                    if failure == nil, let batch = waiting.popFirst() {
+                        group.addTask { await StatBatchOutcome(counter: counter, stat: stat, batch: batch) }
                     }
                 }
             }
@@ -205,6 +206,22 @@ extension AppModel {
             guard let self, !Task.isCancelled, self.vault === vault else { return }
             if let updated = try? vault.pages() { self.pages = updated }
             self.fingerprinting = nil
+        }
+    }
+}
+
+/// What came back for one batch of pages: the quotes found on each counted page, or why counting failed.
+struct StatBatchOutcome: Sendable {
+    let batch: [StatPageText]
+    var found: [UUID: [String]] = [:]
+    var error: Error?
+
+    init(counter: StatCounter, stat: CustomStat, batch: [StatPageText]) async {
+        self.batch = batch
+        do {
+            found = try await counter.count(stat, pages: batch)
+        } catch {
+            self.error = error
         }
     }
 }

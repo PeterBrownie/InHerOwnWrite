@@ -321,8 +321,10 @@ Not started. Listed so they aren't forgotten.
 - **Custom stats haven't been tried against the real API** (November 25, 2026). The requests, schemas, and
   saving pass the offline checks with a stubbed network. Planning a stat and counting old pages were first
   run live in the app on November 25, 2026: counting crashed as soon as a quote came back that wasn't
-  written word for word in one entry (fixed in build 49). Counting while a page is read hasn't been run
-  live, and the quality of Claude's counts and quotes is unmeasured. The duplicate warnings in the add-page sheet and on pages haven't been tried by
+  written word for word in one entry (fixed in build 49), and in release builds it then stopped quietly
+  with nothing saved (fixed in build 50; the checks run a debug build, which didn't show it). Counting
+  from text moved to Sonnet in build 50. Counting while a page is read hasn't been run live, and the
+  quality of the counts and quotes is unmeasured. The duplicate warnings in the add-page sheet and on pages haven't been tried by
   hand either.
 
 - **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, renaming a name on every page, the Storage list in Settings, sorting and starring entries, merging a continued entry with the one before, clicking a week in Analysis and the chart's hover brightening (offscreen renders can't hover), keeping photos as HEIC and converting older pages, removing

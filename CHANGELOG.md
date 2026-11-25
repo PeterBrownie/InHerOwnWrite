@@ -6,6 +6,15 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 50 (November 25, 2026)
+
+- **Counting a stat with Claude now saves what it finds.** In the installed app, counting stopped after
+  "Counting… 0 of N pages" with no error and nothing saved, though Claude had already counted (and been
+  paid for) the pages. It now saves each batch as it comes back.
+- **Stats are counted with Claude Sonnet.** Suggesting a stat and counting it on older pages work from text
+  alone, so they now use Sonnet, which costs about half as much. Reading a page photo, and counting stats
+  while it's read, stays on Claude Opus.
+
 ## Build 49 (November 25, 2026)
 
 - **Counting a stat with Claude no longer crashes.** The app quit as soon as the first pages came back
