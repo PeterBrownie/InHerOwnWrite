@@ -361,10 +361,10 @@ public struct AnalysisDetail: View {
                     StatTile(label: "Average per week", value: perWeek.formatted(.number.precision(.fractionLength(1))))
                 }
                 if let gap = rhythm.longestGap {
-                    StatTile(label: "Longest gap", value: count(gap.days, "day"), detail: "\(gap.from) to \(gap.to)")
+                    StatTile(label: "Longest gap", value: count(gap.days, "day"), detail: "\(gap.from)\nto \(gap.to)")
                 }
                 if let streak = rhythm.longestStreak, streak.days > 1 {
-                    StatTile(label: "Longest streak", value: count(streak.days, "day"), detail: "\(streak.from) to \(streak.to)")
+                    StatTile(label: "Longest streak", value: count(streak.days, "day"), detail: "\(streak.from)\nto \(streak.to)")
                 }
                 if rhythm.currentStreak > 1 {
                     StatTile(label: "Current streak", value: count(rhythm.currentStreak, "day"))
@@ -503,7 +503,8 @@ private struct StatTile: View {
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
