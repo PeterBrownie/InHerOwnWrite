@@ -6,6 +6,12 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 43 (November 24, 2026)
+
+- **Page photos take about 40% less space.** New pages are saved as HEIC instead of JPEG, with no visible
+  difference. Pages saved before are converted quietly in the background while the library is open; a page
+  partway through a reading on this Mac waits until that reading is finished.
+
 ## Build 42 (November 24, 2026)
 
 - **Analysis lists every name.** The **Names** list no longer stops at 40, and a name found on a page now

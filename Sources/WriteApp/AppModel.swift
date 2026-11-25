@@ -149,6 +149,11 @@ public final class AppModel: ObservableObject {
     private var editSaveTask: Task<Void, Never>?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var idleTimer: Timer?
+    /// Converts photos saved before pages were kept as HEIC, one at a time while the library is open.
+    private var photoConversion: Task<Void, Never>?
+    public var isConvertingPhotos: Bool { photoConversion != nil }
+    /// The rest between photos, so converting stays out of the way. The checks shorten it.
+    public var photoConversionPause: Duration = .milliseconds(500)
 
     public init(directory: URL) {
         self.directory = directory
@@ -276,6 +281,8 @@ public final class AppModel: ObservableObject {
         readerTasks.values.forEach { $0.cancel() }
         readerTasks = [:]
         readQueue = []
+        photoConversion?.cancel()
+        photoConversion = nil
         shutDownLocalReading()
         if let vault, pages.contains(where: { $0.status == .reading }) {
             for page in pages where page.status == .reading {
@@ -331,11 +338,44 @@ public final class AppModel: ObservableObject {
             selectedJournalID = selectedJournalID ?? journals.first?.id
             screen = .library
             startIdleTimer()
+            convertOldPhotos()
         } catch {
             errorMessage = error.localizedDescription
             vault.lock()
             self.vault = nil
             screen = .locked
+        }
+    }
+
+    /// Converts, in the background, page photos saved as JPEG by versions before photos were kept as HEIC.
+    /// A page with a reading on this Mac saved partway, or waiting for one, is left until later, since that
+    /// reading is matched to the photo it started on. Once a pass finds nothing left, the vault remembers,
+    /// so later unlocks skip this.
+    func convertOldPhotos() {
+        guard let vault, photoConversion == nil, (try? vault.photosAreConverted()) == false else { return }
+        let ids = pages.map(\.id)
+        photoConversion = Task { [weak self] in
+            var leftSome = false
+            for id in ids {
+                guard let self, !Task.isCancelled, self.vault === vault else { return }
+                if self.pagesWithProgress.contains(id) || self.localQueue.contains(id) {
+                    leftSome = true
+                    continue
+                }
+                do {
+                    let changed = try await Task.detached(priority: .background) {
+                        try vault.convertPhoto(pageID: id)
+                    }.value
+                    if changed { try? await Task.sleep(for: self.photoConversionPause) }
+                } catch VaultError.notFound {
+                    // Deleted meanwhile.
+                } catch {
+                    leftSome = true
+                }
+            }
+            guard let self, !Task.isCancelled, self.vault === vault else { return }
+            if !leftSome { try? vault.markPhotosConverted() }
+            self.photoConversion = nil
         }
     }
 
@@ -517,11 +557,11 @@ public final class AppModel: ObservableObject {
 
     /// Saves the encrypted photo first, then queues it to be read.
     @discardableResult
-    public func addPage(journalID: UUID, number: Int, jpeg: Data, replacing: Bool, readLocally: Bool = false) -> Bool {
+    public func addPage(journalID: UUID, number: Int, photo: Data, replacing: Bool, readLocally: Bool = false) -> Bool {
         guard let vault else { return false }
         do {
             let replaced = pages.first { $0.journalID == journalID && $0.number == number }
-            let page = try vault.addPage(journalID: journalID, number: number, jpeg: jpeg, replacing: replacing)
+            let page = try vault.addPage(journalID: journalID, number: number, photo: photo, replacing: replacing)
             if let replaced {
                 stopReading([replaced.id])
                 localQueue.removeAll { $0 == replaced.id }
@@ -809,7 +849,7 @@ public final class AppModel: ObservableObject {
         do {
             guard let vault else { throw VaultError.locked }
             let jpeg = try vault.image(pageID: id)
-            outcome = .success(try await makeTranscriber(apiKey).transcribe(jpeg: jpeg))
+            outcome = .success(try await makeTranscriber(apiKey).transcribe(photo: jpeg))
         } catch {
             outcome = .failure(error)
         }

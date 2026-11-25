@@ -769,7 +769,7 @@ public struct UploadSheet: View {
         let numbers = numbers
         for (number, page) in zip(numbers, pages) {
             let replace = replacing && model.isPageTaken(journalID: journalID, number: number)
-            guard model.addPage(journalID: journalID, number: number, jpeg: page, replacing: replace,
+            guard model.addPage(journalID: journalID, number: number, photo: page, replacing: replace,
                                 readLocally: model.readsLocally) else {
                 problem = model.errorMessage
                 model.errorMessage = nil

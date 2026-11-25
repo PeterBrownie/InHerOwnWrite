@@ -567,7 +567,7 @@ func runMissingRuntimeChecks() async {
     model.confirmRecoveryKeySaved()
     model.showSettings = false
     guard let journal = model.createJournal(name: "Check Journal"), let jpeg = try? PagePhoto.prepare(handwrittenPage()),
-          model.addPage(journalID: journal.id, number: 3, jpeg: jpeg, replacing: false, readLocally: true),
+          model.addPage(journalID: journal.id, number: 3, photo: jpeg, replacing: false, readLocally: true),
           let added = model.pages.first
     else {
         check("adds a page to read on this Mac", false)
@@ -655,7 +655,7 @@ func runEditingChecks(in directory: URL) throws {
     // Notes are saved with the page and can be cleared.
     let vault = try Vault.create(in: directory.appendingPathComponent("notes"), password: "synthetic password").vault
     let journal = try vault.createJournal(name: "Notes")
-    let page = try vault.addPage(journalID: journal.id, number: 1, jpeg: syntheticPhoto())
+    let page = try vault.addPage(journalID: journal.id, number: 1, photo: syntheticPhoto())
     try vault.saveReading(pageID: page.id, transcription: LocalReader.transcription(of: text, notes: [note]))
     check("saves word notes with the page", try vault.pages().first?.structure?.wordNotes == [note])
     try vault.setWordNotes(pageID: page.id, notes: [])

@@ -237,6 +237,22 @@ ignored. Scribbles become "###", as in readings from Claude.
   the app needs no developer tools, no clone, and no build that could fail where nobody can see why. Macs
   with a clone keep building updates themselves.
 
+## Storing photos
+
+- Photos take almost all of the vault (text is a few kilobytes a page), and they're encrypted, so the
+  database file can't be compressed afterwards; only the way a photo is encoded can make it smaller.
+- Tested on the five real test photos at 2400 pixels, measured against an uncompressed copy (PSNR):
+  HEIC at quality 0.86 matches JPEG at 0.86 and takes about 60% of the space. JPEG at 0.75 or 0.65 saves
+  less and looks worse than HEIC at 0.86. Black and white saves nothing. Even HEIC at 0.5 (about a quarter
+  of the space) looked the same in close-ups, but 0.86 was kept to leave room for local reading.
+- **Kept:** pages are stored as HEIC at 0.86 (about 50 ms a page), and turned back into a JPEG when sent to
+  Claude, since the API doesn't take HEIC. Pages saved as JPEG before are converted in the background
+  while the library is open, one every half second. A page with a reading on this Mac saved partway is
+  skipped until that reading is finished, because the saved reading is matched to the photo it started on
+  and a re-encoded photo could make it start over.
+- Free space left in the vault by deleted pages is wiped (`secure_delete`) and reused by new pages, so it
+  doesn't grow; it isn't worth vacuuming.
+
 ## Future ideas
 
 Not started. Listed so they aren't forgotten.
@@ -278,7 +294,7 @@ Not started. Listed so they aren't forgotten.
 
 ## Known issues
 
-- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, renaming a name on every page, the Storage list in Settings, removing
+- **Not yet tried by hand in the installed app** (as of November 24, 2026): the turning crop frame (and easing the turn by dragging an edge out), the people button and counting people in Analysis, renaming a name on every page, the Storage list in Settings, keeping photos as HEIC and converting older pages, removing
   and restoring words in the reading window, Resume on This Mac after quitting, the word outline, the ink
   tint, adding both pages from one photo, and dropping several photos at once. They pass
   `swift run WriteCheck` and look right in `--render` screenshots, and resuming was checked

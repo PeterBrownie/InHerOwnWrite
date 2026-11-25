@@ -142,7 +142,7 @@ func schemaIsStrict(_ node: Any) -> Bool {
 
 func transcribeError(_ transcriber: Transcriber, _ jpeg: Data) async -> TranscriberError? {
     do {
-        _ = try await transcriber.transcribe(jpeg: jpeg)
+        _ = try await transcriber.transcribe(photo: jpeg)
         return nil
     } catch {
         return error as? TranscriberError
@@ -170,22 +170,24 @@ func runVaultChecks(in directory: URL) throws {
     let photo = try PagePhoto.prepare(syntheticPhoto())
     let journal = try vault.createJournal(name: journalCanary)
     let second = try vault.createJournal(name: "Second")
-    let page = try vault.addPage(journalID: journal.id, number: 61, jpeg: photo)
-    let other = try vault.addPage(journalID: journal.id, number: 62, jpeg: photo)
+    let page = try vault.addPage(journalID: journal.id, number: 61, photo: photo)
+    let other = try vault.addPage(journalID: journal.id, number: 62, photo: photo)
     try vault.setText(pageID: page.id, text: textCanary, status: .done, wasCutOff: false)
     try vault.setText(pageID: other.id, text: "other page", status: .done, wasCutOff: false)
     try vault.setAPIKey(keyCanary)
 
     check("round-trips text", try vault.text(pageID: page.id) == textCanary)
-    check("round-trips photo", try vault.image(pageID: page.id) == photo)
+    let stored = try vault.image(pageID: page.id)
+    check("keeps the photo as HEIC, same size in pixels",
+          PagePhoto.isHEIC(stored) && pixelSize(stored) == pixelSize(photo))
     check("round-trips API key", try vault.apiKey() == keyCanary)
     check("rejects a duplicate page number", throwsError(VaultError.duplicatePage) {
-        try vault.addPage(journalID: journal.id, number: 61, jpeg: photo)
+        try vault.addPage(journalID: journal.id, number: 61, photo: photo)
     })
     check("same number is allowed in another journal",
-          (try? vault.addPage(journalID: second.id, number: 61, jpeg: photo)) != nil)
+          (try? vault.addPage(journalID: second.id, number: 61, photo: photo)) != nil)
     check("rejects page number 0", throwsError(VaultError.invalidPageNumber) {
-        try vault.addPage(journalID: journal.id, number: 0, jpeg: photo)
+        try vault.addPage(journalID: journal.id, number: 0, photo: photo)
     })
     check("rejects moving onto a used page", throwsError(VaultError.duplicatePage) {
         try vault.movePage(id: other.id, toJournal: journal.id, number: 61)
@@ -197,7 +199,7 @@ func runVaultChecks(in directory: URL) throws {
     let sizes = try vault.storage(journalOf: Dictionary(uniqueKeysWithValues: storagePages.map { ($0.id, $0.journalID) }))
     // The first journal has two photos and the second one; each is stored encrypted, a little larger.
     check("measures each journal's storage, photos included",
-          (sizes[journal.id] ?? 0) > 2 * photo.count && (sizes[second.id] ?? 0) > photo.count
+          (sizes[journal.id] ?? 0) > 2 * stored.count && (sizes[second.id] ?? 0) > stored.count
           && (sizes[second.id] ?? 0) < (sizes[journal.id] ?? 0))
 
     let url = Vault.databaseURL(in: directory)
@@ -538,7 +540,7 @@ func runAPIChecks() async throws {
     let jpeg = try PagePhoto.prepare(syntheticPhoto())
 
     StubAPI.replies = [(200, [:], reply(text: "Dear diary\n### line two\n"))]
-    let result = try await transcriber.transcribe(jpeg: jpeg)
+    let result = try await transcriber.transcribe(photo: jpeg)
     check("returns only the text blocks", result.text == "Dear diary\n### line two")
     check("not marked as cut off", !result.wasCutOff)
 
@@ -565,7 +567,7 @@ func runAPIChecks() async throws {
         ],
         names: ["Theo", " theo ", "Marguerite"]
     ))]
-    let structured = try await transcriber.transcribe(jpeg: jpeg)
+    let structured = try await transcriber.transcribe(photo: jpeg)
     let firstMarker = structured.structure.markers.first
     check("reads entry headings", firstMarker?.month == 1 && firstMarker?.day == 16 && firstMarker?.time == "20:59")
     check("drops impossible dates and times", structured.structure.markers.last?.day == nil
@@ -573,7 +575,7 @@ func runAPIChecks() async throws {
     check("dedupes names", structured.structure.names == ["Theo", "Marguerite"])
 
     StubAPI.replies = [(200, [:], reply(text: "partial", stop: "max_tokens"))]
-    let cutOff = try await transcriber.transcribe(jpeg: jpeg)
+    let cutOff = try await transcriber.transcribe(photo: jpeg)
     check("flags a cut-off reading", cutOff.wasCutOff)
 
     StubAPI.replies = [(200, [:], rawReply(#"{"transcription": "unfinish"#, stop: "max_tokens"))]
@@ -598,7 +600,7 @@ func runAPIChecks() async throws {
 
     StubAPI.requests = []
     StubAPI.replies = [(429, ["retry-after": "0"], "{}"), (529, [:], "{}"), (200, [:], reply(text: "recovered"))]
-    let recovered = try await transcriber.transcribe(jpeg: jpeg)
+    let recovered = try await transcriber.transcribe(photo: jpeg)
     check("retries overloads and rate limits", recovered.text == "recovered")
     check("retried the expected number of times", StubAPI.requests.count == 3)
 
@@ -692,7 +694,7 @@ func runRender(output: URL, sample: URL?) async throws {
     _ = model.createJournal(name: "Travel Journal")
     model.selectedJournalID = journal.id
     for number in 1...3 {
-        model.addPage(journalID: journal.id, number: number, jpeg: photo, replacing: false)
+        model.addPage(journalID: journal.id, number: number, photo: photo, replacing: false)
     }
     // Invented text, so entries and analysis have something to show.
     let samples = [
@@ -879,7 +881,7 @@ func runLiveCheck() async -> Bool {
         print("  ok    Anthropic accepted the key")
         let jpeg = try PagePhoto.prepare(handwrittenPage())
         let started = Date()
-        let result = try await transcriber.transcribe(jpeg: jpeg)
+        let result = try await transcriber.transcribe(photo: jpeg)
         print("  ok    read the invented page in \(Int(Date().timeIntervalSince(started))) seconds")
         let expected = expectedLines
         let actual = normalizedLines(result.text)
@@ -935,7 +937,7 @@ func runLiveAppCheck(key: String) async -> Bool {
 
     guard keySaved, let journal = model.createJournal(name: "Live Test Journal"),
           let jpeg = try? PagePhoto.prepare(handwrittenPage()),
-          model.addPage(journalID: journal.id, number: 12, jpeg: jpeg, replacing: false),
+          model.addPage(journalID: journal.id, number: 12, photo: jpeg, replacing: false),
           let pageID = model.pages.first?.id
     else {
         print("  FAIL  could not add the page: \(model.errorMessage ?? "unknown")")
@@ -966,7 +968,7 @@ func runLiveAppCheck(key: String) async -> Bool {
     do {
         let reopened = try Vault.unlock(in: directory, password: password)
         check("text survives lock and reopen", normalizedLines(try reopened.text(pageID: pageID)) == expectedLines)
-        check("photo survives lock and reopen", try reopened.image(pageID: pageID) == jpeg)
+        check("photo survives lock and reopen", try pixelSize(reopened.image(pageID: pageID)) == pixelSize(jpeg))
         check("key survives lock and reopen", try reopened.apiKey() == key)
     } catch {
         check("vault reopens", false)
@@ -1011,6 +1013,7 @@ if arguments.contains("--local") {
             try runVaultChecks(in: directory)
             runEntryChecks()
             try runPhotoChecks()
+            try await runPhotoStorageChecks()
             try await runAPIChecks()
             try await runQueueChecks()
             try await runLocalReadingChecks()

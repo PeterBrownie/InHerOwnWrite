@@ -89,6 +89,8 @@ public struct PageInfo: Identifiable, Hashable, Codable, Sendable {
 private struct AppSettings: Codable {
     var apiKey: String?
     var hiddenWords: [String]?
+    /// Set once every page photo saved before photos were kept as HEIC has been converted.
+    var photosConverted: Bool?
 }
 
 /// The encrypted journal database.
@@ -421,10 +423,13 @@ public final class Vault: @unchecked Sendable {
         }
     }
 
-    /// Stores the photo before any network call, so a failed reading never loses a page.
+    /// Stores the photo before any network call, so a failed reading never loses a page. The photo is kept
+    /// as HEIC; the checks pass `converting: false` to make pages like those saved before that.
     @discardableResult
-    public func addPage(journalID: UUID, number: Int, jpeg: Data, replacing: Bool = false) throws -> PageInfo {
+    public func addPage(journalID: UUID, number: Int, photo: Data, replacing: Bool = false,
+                        converting: Bool = true) throws -> PageInfo {
         guard (1...Self.maximumPageNumber).contains(number) else { throw VaultError.invalidPageNumber }
+        let photo = converting ? try PagePhoto.forStorage(photo) : photo
         return try locked {
             let keys = try requireKeys()
             guard try journals().contains(where: { $0.id == journalID }) else { throw VaultError.notFound }
@@ -435,7 +440,7 @@ public final class Vault: @unchecked Sendable {
             let id = Self.key(page.id)
             let record = try sealRecord(page)
             let body = try Crypto.seal(Data(), key: keys.records, context: "page/\(id)/body")
-            let image = try Crypto.seal(jpeg, key: keys.records, context: "page/\(id)/image")
+            let image = try Crypto.seal(photo, key: keys.records, context: "page/\(id)/image")
 
             try database.transaction {
                 let taken = try !database.query("SELECT 1 FROM pages WHERE slot = ?", [.blob(slot)]) { _ in true }.isEmpty
@@ -478,6 +483,42 @@ public final class Vault: @unchecked Sendable {
                 throw VaultError.corrupted
             }
             return plain
+        }
+    }
+
+    /// Whether every photo saved before photos were kept as HEIC has been converted.
+    public func photosAreConverted() throws -> Bool {
+        try locked { try readSettings().photosConverted ?? false }
+    }
+
+    public func markPhotosConverted() throws {
+        try updateSettings { $0.photosConverted = true }
+    }
+
+    /// Converts a page's photo to HEIC if it isn't already. Returns whether it changed. The encoding happens
+    /// outside the vault's lock, and the new photo is saved only if the page still has the photo it started
+    /// from, so a page replaced or deleted meanwhile is left alone.
+    @discardableResult
+    public func convertPhoto(pageID: UUID) throws -> Bool {
+        let id = Self.key(pageID)
+        let (sealed, plain) = try locked { () -> (Data, Data) in
+            let keys = try requireKeys()
+            guard let sealed = try database.query("SELECT image FROM pages WHERE id = ?", [.text(id)], map: { $0.blob(0) }).first else {
+                throw VaultError.notFound
+            }
+            guard let plain = try? Crypto.open(sealed, key: keys.records, context: "page/\(id)/image") else {
+                throw VaultError.corrupted
+            }
+            return (sealed, plain)
+        }
+        let converted = try PagePhoto.forStorage(plain)
+        guard converted != plain else { return false }
+        return try locked {
+            let keys = try requireKeys()
+            let image = try Crypto.seal(converted, key: keys.records, context: "page/\(id)/image")
+            try database.run("UPDATE pages SET image = ? WHERE id = ? AND image = ?",
+                             [.blob(image), .text(id), .blob(sealed)])
+            return database.changes > 0
         }
     }
 

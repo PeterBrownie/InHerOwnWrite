@@ -46,6 +46,54 @@ public enum PagePhoto {
         throw PagePhotoError.tooLarge
     }
 
+    /// Pages are kept as HEIC, which at the same quality setting takes about 60% of a JPEG's space and
+    /// looks the same. Pages saved before that are JPEG, and everything that reads a page takes either.
+    public static func isHEIC(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source) as String?
+        else { return false }
+        return UTType(type)?.conforms(to: .heic) ?? false
+    }
+
+    /// A page photo as it's kept in the vault: HEIC at full size. If this Mac can't write HEIC, the photo is
+    /// kept as it came.
+    public static func forStorage(_ data: Data) throws -> Data {
+        if isHEIC(data) { return data }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { throw PagePhotoError.unreadable }
+        // HEIC keeps an alpha channel if there is one, and some Macs refuse gray images, so the page is
+        // drawn as plain color first.
+        let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { return data }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let opaque = context.makeImage() else { return data }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.heic.identifier as CFString, 1, nil)
+        else { return data }
+        CGImageDestinationAddImage(destination, opaque, [kCGImageDestinationLossyCompressionQuality: 0.86] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), output.length > 0 else { return data }
+        return output as Data
+    }
+
+    /// A kept page photo as a JPEG for the API, which doesn't take HEIC.
+    public static func forSending(_ data: Data) throws -> Data {
+        guard isHEIC(data) else { return data }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int
+        else { throw PagePhotoError.unreadable }
+        for attempt in [(dimension: 2400, quality: 0.9)] + attempts {
+            let output = try encode(source, maxDimension: min(attempt.dimension, max(width, height)), quality: attempt.quality)
+            if output.count <= maxOutputBytes { return output }
+        }
+        throw PagePhotoError.tooLarge
+    }
+
     /// When a photo was taken, from its camera metadata, or failing that when the file was created.
     public static func dateTaken(_ url: URL) -> Date? {
         let scoped = url.startAccessingSecurityScopedResource()

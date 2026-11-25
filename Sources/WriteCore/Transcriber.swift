@@ -143,8 +143,10 @@ public struct Transcriber: Sendable {
         return URLSession(configuration: configuration)
     }
 
-    public func transcribe(jpeg: Data) async throws -> Transcription {
+    /// Reads a page photo, HEIC or JPEG.
+    public func transcribe(photo: Data) async throws -> Transcription {
         guard !apiKey.isEmpty else { throw TranscriberError.missingKey }
+        let jpeg = try PagePhoto.forSending(photo)
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/messages"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")

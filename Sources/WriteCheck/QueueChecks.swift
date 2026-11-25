@@ -64,7 +64,7 @@ func runQueueChecks() async throws {
     let jpeg = try PagePhoto.prepare(handwrittenPage())
     let count = AppModel.concurrentReads + 3
     for number in 1...count {
-        _ = model.addPage(journalID: journal.id, number: number, jpeg: jpeg, replacing: false)
+        _ = model.addPage(journalID: journal.id, number: number, photo: jpeg, replacing: false)
     }
     // Deleting a page while it's being read cancels it and lets the next one start.
     if let first = model.pages.first(where: { $0.number == 1 }) { model.deletePage(id: first.id) }
