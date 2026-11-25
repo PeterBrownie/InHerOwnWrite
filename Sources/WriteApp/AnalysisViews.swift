@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WriteCore
 
@@ -86,8 +87,9 @@ private struct SnapshotKey: Hashable {
 public struct AnalysisDetail: View {
     @EnvironmentObject private var model: AppModel
     @ViewState private var snapshot: AnalysisSnapshot?
-    @ViewState private var term = ""
-    @ViewState private var result: TermResult?
+    @ViewState private var results: [TermResult] = []
+    @ViewState private var matches: [[TermMatch]] = []
+    @ViewState private var showAllMatches = false
     @ViewState private var axis = TimelineAxis.date
     @ViewState private var includeCommon = false
     @ViewState private var showAllWords = false
@@ -99,8 +101,33 @@ public struct AnalysisDetail: View {
 
     private static let wordLimit = 40
 
-    public init(initialTerm: String = "") {
-        _term = ViewState(wrappedValue: initialTerm)
+    public init() {}
+
+    private var term: String {
+        get { model.analysisTerm }
+        nonmutating set { model.analysisTerm = newValue }
+    }
+
+    private func lookUp(_ text: String) {
+        guard let snapshot else { results = []; matches = []; return }
+        let parts = AnalysisSnapshot.splitTerms(text)
+        results = parts.compactMap { snapshot.term($0) }
+        matches = parts.map { snapshot.matches($0) }
+        showAllMatches = false
+    }
+
+    /// A plain click looks a word up; Command-click adds it to the words being compared.
+    private func select(_ word: String) {
+        let current = AnalysisSnapshot.splitTerms(term)
+        if NSEvent.modifierFlags.contains(.command), !current.isEmpty {
+            if let index = current.firstIndex(where: { $0.caseInsensitiveCompare(word) == .orderedSame }) {
+                term = current.enumerated().filter { $0.offset != index }.map(\.element).joined(separator: ", ")
+            } else {
+                term = (current + [word]).joined(separator: ", ")
+            }
+        } else {
+            term = word
+        }
     }
 
     private var key: SnapshotKey {
@@ -133,10 +160,10 @@ public struct AnalysisDetail: View {
             guard !Task.isCancelled else { return }
             snapshot = made
             rhythm = made.entryRhythm()
-            result = made.term(term)
+            lookUp(term)
         }
-        .onChange(of: term) { _, value in
-            result = snapshot?.term(value)
+        .onChange(of: model.analysisTerm) { _, value in
+            lookUp(value)
         }
         .confirmationDialog(
             "Read \(model.pagesMissingNames.count) older pages again?",
@@ -182,7 +209,7 @@ public struct AnalysisDetail: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Type a word or name", text: $term)
+                TextField("Type a word or name; separate several with commas", text: $model.analysisTerm)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
                 if !term.isEmpty {
@@ -196,22 +223,37 @@ public struct AnalysisDetail: View {
             .background(Theme.paper, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
 
-            if let result {
-                termResult(result)
+            if !results.isEmpty {
+                termResult(results)
             }
         }
     }
 
-    private func termResult(_ result: TermResult) -> some View {
-        let bins = axis == .date ? result.byDate : result.byPage
+    private func termResult(_ results: [TermResult]) -> some View {
+        let series = results.enumerated().map { index, result in
+            TimelineSeries(name: result.display, color: Theme.series(index),
+                           bins: axis == .date ? result.byDate : result.byPage)
+        }
+        let bins = series.first?.bins ?? []
+        let total = results.reduce(0) { $0 + $1.total }
+        let undated = results.reduce(0) { $0 + $1.undatedMentions }
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 28) {
-                StatTile(label: "Mentions of “\(result.display)”", value: result.total)
-                StatTile(label: "Pages", value: result.pageCount)
-                StatTile(label: "Entries", value: result.entryCount)
-                Spacer()
+            if results.count == 1, let result = results.first {
+                HStack(spacing: 28) {
+                    StatTile(label: "Mentions of “\(result.display)”", value: result.total)
+                    StatTile(label: "Pages", value: result.pageCount)
+                    StatTile(label: "Entries", value: result.entryCount)
+                    Spacer()
+                }
+            } else {
+                HStack(spacing: 28) {
+                    ForEach(Array(results.enumerated()), id: \.offset) { index, result in
+                        StatTile(label: "“\(result.display)”", value: result.total, color: Theme.series(index))
+                    }
+                    Spacer()
+                }
             }
-            if result.total > 0 {
+            if total > 0 {
                 HStack {
                     Text("Usage over the journal").font(.headline)
                     Spacer()
@@ -224,7 +266,7 @@ public struct AnalysisDetail: View {
                     .fixedSize()
                 }
                 if bins.count >= 2 {
-                    TimelineChart(bins: bins, term: result.display)
+                    TimelineChart(series: series)
                         .frame(height: 210)
                 } else {
                     Text(axis == .date
@@ -232,19 +274,29 @@ public struct AnalysisDetail: View {
                          : "Include more pages to see a chart.")
                         .foregroundStyle(.secondary)
                 }
-                if axis == .date, result.undatedMentions > 0 {
-                    Text("\(count(result.undatedMentions, "mention")) in undated writing \(result.undatedMentions == 1 ? "isn't" : "aren't") shown by date.")
+                if axis == .date, undated > 0 {
+                    Text("\(count(undated, "mention")) in undated writing \(undated == 1 ? "isn't" : "aren't") shown by date.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if results.count == 1 {
+                    Text("Command-click words below to compare them with this one.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 if bins.count >= 2 {
                     DisclosureGroup("Table", isExpanded: $showTable) {
                         VStack(spacing: 3) {
-                            ForEach(bins.filter { $0.count > 0 }) { bin in
+                            ForEach(bins.indices.filter { index in series.contains { $0.bins[index].count > 0 } }, id: \.self) { index in
                                 HStack {
-                                    Text(bin.label)
+                                    Text(bins[index].label)
                                     Spacer()
-                                    Text("\(bin.count)").monospacedDigit()
+                                    ForEach(series.indices, id: \.self) { item in
+                                        Text("\(series[item].bins[index].count)")
+                                            .monospacedDigit()
+                                            .foregroundStyle(series.count > 1 ? series[item].color : .primary)
+                                            .frame(minWidth: 36, alignment: .trailing)
+                                    }
                                 }
                                 .font(.callout)
                             }
@@ -253,9 +305,33 @@ public struct AnalysisDetail: View {
                     }
                     .font(.callout)
                 }
+                matchList
             } else {
-                Text("That doesn't appear in the selected pages.")
+                Text("\(results.count == 1 ? "That doesn't" : "Those don't") appear in the selected pages.")
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static let matchLimit = 25
+
+    /// Where the words appear, newest journal order, each opening its page.
+    private var matchList: some View {
+        let all = matches.enumerated().flatMap { index, list in list.map { (series: index, match: $0) } }
+        let shown = showAllMatches ? all : Array(all.prefix(Self.matchLimit))
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Where it appears").font(.headline).padding(.top, 6)
+            ForEach(shown, id: \.match.id) { item in
+                Button { model.openPage(item.match.pageID) } label: {
+                    MatchRow(match: item.match, color: matches.count > 1 ? Theme.series(item.series) : nil)
+                }
+                .buttonStyle(.plain)
+                .help("Open page \(item.match.pageNumber)")
+            }
+            if all.count > Self.matchLimit {
+                Button(showAllMatches ? "Show Fewer" : "Show All \(all.count)") { showAllMatches.toggle() }
+                    .buttonStyle(.link)
+                    .font(.caption)
             }
         }
     }
@@ -294,7 +370,7 @@ public struct AnalysisDetail: View {
                     .foregroundStyle(.secondary)
             } else {
                 if bins.count >= 2 {
-                    TimelineChart(bins: bins, term: "entries", noun: ("entry", "entries"))
+                    TimelineChart(series: [TimelineSeries(name: "entries", color: Theme.chart, bins: bins)], noun: ("entry", "entries"))
                         .frame(height: 180)
                 }
                 Text(rhythmNote(rhythm))
@@ -340,7 +416,7 @@ public struct AnalysisDetail: View {
             if shown.isEmpty {
                 Text("No words to show.").foregroundStyle(.secondary)
             }
-            WordRows(words: shown, maximum: shown.first?.count ?? 1) { term = $0 }
+            WordRows(words: shown, maximum: shown.first?.count ?? 1) { select($0) }
             if words.count > Self.wordLimit {
                 Button(showAllWords ? "Show Fewer" : "Show More") { showAllWords.toggle() }
                     .buttonStyle(.link)
@@ -360,7 +436,7 @@ public struct AnalysisDetail: View {
             if names.isEmpty {
                 Text("No names yet.").foregroundStyle(.secondary)
             }
-            WordRows(words: Array(names.prefix(Self.wordLimit)), maximum: names.first?.count ?? 1) { term = $0 }
+            WordRows(words: Array(names.prefix(Self.wordLimit)), maximum: names.first?.count ?? 1) { select($0) }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -374,6 +450,7 @@ private struct StatTile: View {
     let label: String
     let value: String
     var detail: String?
+    var color: Color?
 
     init(label: String, value: String, detail: String? = nil) {
         self.label = label
@@ -381,16 +458,20 @@ private struct StatTile: View {
         self.detail = detail
     }
 
-    init(label: String, value: Int) {
+    init(label: String, value: Int, color: Color? = nil) {
         self.init(label: label, value: value.formatted())
+        self.color = color
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 5) {
+                if let color { Circle().fill(color).frame(width: 8, height: 8) }
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
             Text(value)
                 .font(.system(size: 26, weight: .semibold))
             if let detail {
@@ -400,6 +481,49 @@ private struct StatTile: View {
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// One place a word appears: date, page, journal, and two lines around it.
+private struct MatchRow: View {
+    let match: TermMatch
+    let color: Color?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if let color { Circle().fill(color).frame(width: 8, height: 8).padding(.top, 5) }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(match.date ?? "Undated").font(.callout.weight(.semibold))
+                    Text("p. \(match.pageNumber)").font(.callout).foregroundStyle(.secondary)
+                    if let journal = match.journalName {
+                        Text(journal).font(.callout).foregroundStyle(.secondary)
+                    }
+                    if match.count > 1 {
+                        Text("\(match.count) times").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Text(snippet)
+                    .font(.callout)
+                    .lineLimit(2)
+                    .foregroundStyle(.primary.opacity(0.85))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(Theme.paper, in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+    }
+
+    private var snippet: AttributedString {
+        var text = AttributedString(match.snippet)
+        guard let range = match.highlight, range.upperBound <= match.snippet.count else { return text }
+        let start = text.index(text.startIndex, offsetByCharacters: range.lowerBound)
+        let end = text.index(text.startIndex, offsetByCharacters: range.upperBound)
+        text[start..<end].font = .callout.weight(.bold)
+        text[start..<end].foregroundColor = color ?? Theme.accent
+        return text
     }
 }
 
@@ -420,7 +544,7 @@ private struct WordRows: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("See how \(word.display) is used over time")
+                    .help("See where \(word.display) appears; Command-click to compare it with the words already chosen")
 
                     GeometryReader { proxy in
                         UnevenRoundedRectangle(bottomTrailingRadius: 3, topTrailingRadius: 3)
@@ -476,10 +600,16 @@ private struct HiddenWordsPopover: View {
     }
 }
 
-/// A single-series column chart with hover details.
-private struct TimelineChart: View {
+struct TimelineSeries {
+    let name: String
+    let color: Color
+    /// Must line up bin for bin with the other series in the same chart.
     let bins: [TimelineBin]
-    let term: String
+}
+
+/// A column chart with hover details; several series sit side by side in each slot.
+private struct TimelineChart: View {
+    let series: [TimelineSeries]
     /// What each bar counts, singular and plural.
     var noun = ("mention", "mentions")
     @ViewState private var hovered: Int?
@@ -492,7 +622,7 @@ private struct TimelineChart: View {
             let plot = CGRect(x: axisWidth, y: 10,
                               width: max(proxy.size.width - axisWidth, 1),
                               height: max(proxy.size.height - axisHeight - 10, 1))
-            let ticks = Self.ticks(maximum: bins.map(\.count).max() ?? 1)
+            let ticks = Self.ticks(maximum: series.flatMap { $0.bins.map(\.count) }.max() ?? 1)
             let top = CGFloat(ticks.last ?? 1)
 
             ZStack(alignment: .topLeading) {
@@ -510,14 +640,18 @@ private struct TimelineChart: View {
                                           width: slot, height: plot.height)
                         context.fill(Path(band), with: .color(.primary.opacity(0.06)))
                     }
-                    let width = max(min(24, slot - 2), 1)
-                    for (index, bin) in bins.enumerated() where bin.count > 0 {
-                        let height = max(plot.height * CGFloat(bin.count) / top, 2)
-                        let rect = CGRect(x: plot.minX + slot * CGFloat(index) + (slot - width) / 2,
-                                          y: plot.maxY - height, width: width, height: height)
-                        let radius = min(4, width / 2, height)
-                        let bar = UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius).path(in: rect)
-                        context.fill(bar, with: .color(Theme.chart))
+                    let group = max(min(24 * CGFloat(series.count), slot - 2), 1)
+                    let width = group / CGFloat(max(series.count, 1))
+                    for (item, line) in series.enumerated() {
+                        for (index, bin) in line.bins.enumerated() where bin.count > 0 {
+                            let height = max(plot.height * CGFloat(bin.count) / top, 2)
+                            let rect = CGRect(x: plot.minX + slot * CGFloat(index) + (slot - group) / 2 + width * CGFloat(item),
+                                              y: plot.maxY - height, width: max(width - (series.count > 1 ? 1 : 0), 1),
+                                              height: height)
+                            let radius = min(4, rect.width / 2, height)
+                            let bar = UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius).path(in: rect)
+                            context.fill(bar, with: .color(line.color))
+                        }
                     }
                 }
 
@@ -540,7 +674,7 @@ private struct TimelineChart: View {
                 }
 
                 if let hovered, bins.indices.contains(hovered) {
-                    tooltip(bins[hovered])
+                    tooltip(hovered)
                         .position(x: min(max(center(hovered, plot), plot.minX + 90), plot.maxX - 90), y: plot.minY + 24)
                         .allowsHitTesting(false)
                 }
@@ -561,16 +695,34 @@ private struct TimelineChart: View {
             }
         }
         .accessibilityElement()
-        .accessibilityLabel(noun.0 == "mention" ? "Chart of mentions of \(term) over the journal" : "Chart of \(term) over the journal")
-        .accessibilityValue(bins.filter { $0.count > 0 }.map { "\($0.label): \($0.count)" }.joined(separator: ", "))
+        .accessibilityLabel(noun.0 == "mention"
+                            ? "Chart of mentions of \(names) over the journal" : "Chart of \(names) over the journal")
+        .accessibilityValue(series.map { line in
+            line.name + ": " + line.bins.filter { $0.count > 0 }.map { "\($0.label): \($0.count)" }.joined(separator: ", ")
+        }.joined(separator: "; "))
     }
 
-    private func tooltip(_ bin: TimelineBin) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private var names: String { series.map(\.name).joined(separator: ", ") }
+    private var bins: [TimelineBin] { series.first?.bins ?? [] }
+
+    private func tooltip(_ index: Int) -> some View {
+        let bin = series[0].bins[index]
+        return VStack(alignment: .leading, spacing: 2) {
             Text(bin.label).font(.caption.weight(.semibold)).lineLimit(1)
-            Text("\(bin.count) \(bin.count == 1 ? noun.0 : noun.1) · \(bin.pageCount) \(bin.pageCount == 1 ? "page" : "pages")")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if series.count == 1 {
+                Text("\(bin.count) \(bin.count == 1 ? noun.0 : noun.1) · \(bin.pageCount) \(bin.pageCount == 1 ? "page" : "pages")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(series.indices, id: \.self) { item in
+                    HStack(spacing: 5) {
+                        Circle().fill(series[item].color).frame(width: 7, height: 7)
+                        Text("\(series[item].name): \(series[item].bins[index].count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)

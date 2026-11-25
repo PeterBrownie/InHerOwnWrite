@@ -158,6 +158,22 @@ public struct TermResult: Sendable {
     public let byPage: [TimelineBin]
 }
 
+/// One place a looked-up word appears: part of an entry on one page.
+public struct TermMatch: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let pageID: UUID
+    public let pageNumber: Int
+    /// The journal's name, only when the chosen pages come from more than one journal.
+    public let journalName: String?
+    /// The entry's date, or nil for undated writing.
+    public let date: String?
+    public let count: Int
+    /// Text around the first mention, about two lines' worth, with "…" where it was cut.
+    public let snippet: String
+    /// Where the first mention sits in `snippet`, for highlighting.
+    public let highlight: Range<Int>?
+}
+
 /// A prepared copy of the chosen pages, safe to compute away from the main thread.
 public struct AnalysisSnapshot: Sendable {
     struct Unit: Sendable {
@@ -168,6 +184,8 @@ public struct AnalysisSnapshot: Sendable {
         let year: Int?
         let month: Int?
         let day: Int?
+        let date: String?
+        let body: String
         let keys: [String]
     }
 
@@ -196,6 +214,7 @@ public struct AnalysisSnapshot: Sendable {
                 let tokens = WordTokenizer.tokens(in: part.body)
                 units.append(Unit(journalID: entry.journalID, pageID: part.pageID, pageNumber: part.pageNumber,
                                   entryID: entry.id, year: entry.year, month: entry.month, day: entry.day,
+                                  date: entry.isDated ? entry.title : nil, body: part.body,
                                   keys: tokens.map(\.key)))
                 entryIDs.insert(entry.id)
                 if entry.isDated && entry.year != nil { datedIDs.insert(entry.id) }
@@ -262,6 +281,81 @@ public struct AnalysisSnapshot: Sendable {
             byDate: dateBins(perUnit),
             byPage: pageBins(perUnit)
         )
+    }
+
+    /// Several words or names to compare, separated by commas. Empty parts are skipped.
+    public func terms(_ text: String) -> [TermResult] {
+        Self.splitTerms(text).compactMap(term)
+    }
+
+    public static func splitTerms(_ text: String) -> [String] {
+        text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// Every entry part that mentions the word or phrase, in journal order, with text around the first mention.
+    public func matches(_ text: String) -> [TermMatch] {
+        let keys = WordTokenizer.tokens(in: text).map(\.key)
+        guard !keys.isEmpty else { return [] }
+        let multipleJournals = Set(units.map(\.journalID)).count > 1
+        return units.enumerated().compactMap { index, unit in
+            let count = Self.occurrences(of: keys, in: unit.keys)
+            guard count > 0 else { return nil }
+            let (snippet, highlight) = Self.snippet(of: keys, in: unit.body)
+            return TermMatch(id: "\(index)", pageID: unit.pageID, pageNumber: unit.pageNumber,
+                             journalName: multipleJournals ? journalNames[unit.journalID] : nil,
+                             date: unit.date, count: count, snippet: snippet, highlight: highlight)
+        }
+    }
+
+    /// About two lines of text around the first place the words appear, on one line.
+    public static func snippet(of keys: [String], in body: String, before: Int = 70, after: Int = 110) -> (String, Range<Int>?) {
+        let flat = body.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "  ", with: " ")
+        // Find words with their positions, matched the way the tokenizer keys them.
+        var words: [(key: String, range: Range<String.Index>)] = []
+        var start: String.Index?
+        var index = flat.startIndex
+        func close(_ end: String.Index) {
+            guard let from = start else { return }
+            start = nil
+            let tokens = WordTokenizer.tokens(in: String(flat[from..<end]))
+            if let token = tokens.first, tokens.count == 1 { words.append((token.key, from..<end)) }
+        }
+        while index < flat.endIndex {
+            let character = flat[index]
+            if character.isLetter || character.isNumber || character == "'" || character == "’" {
+                if start == nil { start = index }
+            } else {
+                close(index)
+            }
+            index = flat.index(after: index)
+        }
+        close(flat.endIndex)
+
+        var found: Range<String.Index>?
+        if words.count >= keys.count {
+            for position in 0...(words.count - keys.count)
+            where zip(words[position..<(position + keys.count)], keys).allSatisfy({ $0.0.key == $0.1 }) {
+                found = words[position].range.lowerBound..<words[position + keys.count - 1].range.upperBound
+                break
+            }
+        }
+        guard let found else {
+            let text = String(flat.prefix(before + after))
+            return (text.count < flat.count ? text + "…" : text, nil)
+        }
+        var from = flat.index(found.lowerBound, offsetBy: -before, limitedBy: flat.startIndex) ?? flat.startIndex
+        var to = flat.index(found.upperBound, offsetBy: after, limitedBy: flat.endIndex) ?? flat.endIndex
+        // Cut at spaces so words aren't split.
+        if from > flat.startIndex, let space = flat[from..<found.lowerBound].firstIndex(of: " ") {
+            from = flat.index(after: space)
+        }
+        if to < flat.endIndex, let space = flat[found.upperBound..<to].lastIndex(of: " ") { to = space }
+        let prefix = from > flat.startIndex ? "…" : ""
+        let suffix = to < flat.endIndex ? "…" : ""
+        let lower = prefix.count + flat.distance(from: from, to: found.lowerBound)
+        let upper = lower + flat.distance(from: found.lowerBound, to: found.upperBound)
+        return (prefix + flat[from..<to] + suffix, lower..<upper)
     }
 
     /// Entries per month and per week, the averages over the whole span, and the longest gap. An entry that

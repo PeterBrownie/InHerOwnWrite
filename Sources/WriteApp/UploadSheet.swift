@@ -1000,6 +1000,21 @@ public struct SettingsSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                HStack(spacing: 10) {
+                    Text("Color").foregroundStyle(.secondary)
+                    ForEach(AccentChoice.allCases) { choice in
+                        Button { model.accent = choice } label: {
+                            Circle()
+                                .fill(Theme.swatch(choice))
+                                .frame(width: 22, height: 22)
+                                .overlay(Circle().strokeBorder(.primary.opacity(model.accent == choice ? 0.8 : 0), lineWidth: 2).padding(-4))
+                        }
+                        .buttonStyle(.plain)
+                        .help(choice.label)
+                        .accessibilityLabel(choice.label)
+                    }
+                }
+                .padding(.top, 4)
             }
 
             VStack(alignment: .leading, spacing: 4) {

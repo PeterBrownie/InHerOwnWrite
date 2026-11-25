@@ -20,6 +20,7 @@ public struct RootView: View {
         }
         // An update is only offered; nothing restarts until she chooses Update & Restart. The library shows
         // the bar in its detail column instead, so it doesn't spread behind the sidebar and title bar.
+        .tint(Theme.accent)
         .safeAreaInset(edge: .top, spacing: 0) {
             if model.screen != .library && updater.showsBanner { UpdateBanner(updater: updater) }
         }

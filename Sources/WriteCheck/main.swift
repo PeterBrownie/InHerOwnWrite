@@ -339,6 +339,20 @@ func runEntryChecks() {
     check("counts phrases", term?.total == 2 && term?.entryCount == 1)
     check("charts by page", term?.byPage.map(\.count).reduce(0, +) == 2)
     check("charts by date", term?.byDate.map(\.count).reduce(0, +) == 2 && (term?.byDate.count ?? 0) >= 1)
+    let found = snapshot.matches("Body B")
+    check("lists where a phrase appears", found.map(\.pageNumber) == [1, 2]
+          && found.allSatisfy { $0.count == 1 && $0.journalName == nil })
+    check("highlights the phrase in its snippet", found.first.map { match in
+        match.highlight.map { range in
+            let characters = Array(match.snippet)
+            return String(characters[range]).lowercased() == "body b"
+        } ?? false
+    } == true)
+    let (cut, cutRange) = AnalysisSnapshot.snippet(of: ["needle"], in: String(repeating: "hay ", count: 60) + "needle"
+                                                   + String(repeating: " straw", count: 60))
+    check("cuts long snippets around the word", cut.hasPrefix("…") && cut.hasSuffix("…") && cut.count < 200
+          && cutRange.map { String(Array(cut)[$0]) } == "needle")
+    check("compares several words", snapshot.terms("body, Body B, ").map(\.total) == [4, 2])
     check("names only count when present", snapshot.nameStats(hidden: []).map(\.key) == ["body"])
     let onlyPage4 = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:])
     check("limits analysis to chosen pages", onlyPage4.pageCount == 1 && onlyPage4.term("body")?.total == 0)
@@ -484,7 +498,9 @@ func render<V: View>(_ view: V, size: CGSize, to url: URL, dark: Bool = false, w
     window.isReleasedWhenClosed = false
     window.contentView = hosting
     window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
-    window.orderFrontRegardless()
+    // Behind every other app's windows, so rendering doesn't cover what the person is doing.
+    window.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
+    window.orderBack(nil)
     // Suspending lets SwiftUI's main-actor work, such as loading the page photo, finish.
     try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
     hosting.layoutSubtreeIfNeeded()
@@ -587,10 +603,15 @@ func runRender(output: URL, sample: URL?) async throws {
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("3d-entries.png"))
     model.showingAnalysis = true
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("8-analysis.png"))
-    await render(AnalysisDetail(initialTerm: "Theo").environmentObject(model), size: CGSize(width: 900, height: 900),
+    model.analysisTerm = "Theo"
+    await render(AnalysisDetail().environmentObject(model), size: CGSize(width: 900, height: 1100),
                  to: output.appendingPathComponent("9-analysis-term.png"))
-    await render(AnalysisDetail(initialTerm: "Theo").environmentObject(model), size: CGSize(width: 900, height: 900),
-                 to: output.appendingPathComponent("9-analysis-term-dark.png"), dark: true)
+    model.analysisTerm = "Theo, park"
+    model.accent = .blue
+    await render(AnalysisDetail().environmentObject(model), size: CGSize(width: 900, height: 1100),
+                 to: output.appendingPathComponent("9-analysis-terms-dark.png"), dark: true)
+    model.accent = .clay
+    model.analysisTerm = ""
     model.showingAnalysis = false
     model.setLibraryMode(.pages)
     await render(UploadSheet().environmentObject(model), size: CGSize(width: 760, height: 560),

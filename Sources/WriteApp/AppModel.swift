@@ -47,6 +47,8 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var libraryMode: LibraryMode = .pages
     @Published public var showingAnalysis = false
     @Published public var searchText = ""
+    /// The words looked up in Analysis, separated by commas; kept while a match's page is open.
+    @Published public var analysisTerm = ""
     @Published public var isWorking = false
     @Published public var errorMessage: String?
     @Published public var showUpload = false
@@ -60,6 +62,13 @@ public final class AppModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(appearance.rawValue, forKey: PreferenceKey.appearance)
             NSApplication.shared.appearance = appearance.nsAppearance
+        }
+    }
+    /// The theme color; `Theme.accent` and `Theme.chart` follow it.
+    @Published public var accent: AccentChoice {
+        didSet {
+            AccentChoice.current = accent
+            UserDefaults.standard.set(accent.rawValue, forKey: AccentChoice.preferenceKey)
         }
     }
     @Published public var showPhoto: Bool {
@@ -132,6 +141,7 @@ public final class AppModel: ObservableObject {
         let defaults = UserDefaults.standard
         let mode = defaults.string(forKey: PreferenceKey.appearance).flatMap(AppearanceMode.init(rawValue:)) ?? .system
         appearance = mode
+        accent = AccentChoice.current
         showPhoto = defaults.object(forKey: PreferenceKey.showPhoto) as? Bool ?? false
         twoPageSpread = defaults.bool(forKey: PreferenceKey.twoPages)
         accurateLineBreaks = defaults.object(forKey: PreferenceKey.lineBreaks) as? Bool ?? true

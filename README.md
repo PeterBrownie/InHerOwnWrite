@@ -80,11 +80,16 @@ page. A page that can't be read keeps its photo and can be retried.
 - **Pages or entries.** Each page is split into entries wherever a date line starts one, so an entry can be
   part of a page or run across several. A date written without a year takes its year from nearby entries.
   Editing a date line in the text updates the entry.
+- **Color.** Settings has five colors for buttons, links, and charts: Clay (the original), Green, Blue,
+  Plum, and Slate.
 - **Reading controls.** Show or hide the photo, show one page or two, and flip with ⌘[ and ⌘]. Accurate
   Line Breaks (View menu or Settings) shows lines as written; turn it off to read flowing paragraphs. Text
   can be edited either way; with line breaks off, each change is made to the text as written.
 - **Analysis.** Choose journals and page ranges, see top words (hide any you don't want), the names Claude
-  found, and how often any word or name appears over time. **Entries** counts the entries, charts them per
+  found, and how often any word or name appears over time. Click a word to look it up: below the chart,
+  **Where it appears** lists each place with its date, page, journal (when there's more than one), and two
+  lines around it; click one to open the page. ⌘-click more words, or type them separated by commas, to
+  compare them in one chart, each in its own color. **Entries** counts the entries, charts them per
   month or per week, averages both over the whole span from the first dated entry to the last, and shows
   the longest gap between two entries.
 
