@@ -98,10 +98,17 @@ public struct AnalysisDetail: View {
     @ViewState private var confirmRead = false
     @ViewState private var rhythm: EntryRhythm?
     @ViewState private var byWeek = false
+    /// The stat whose history is shown under the Entries tiles, if one was clicked.
+    @ViewState private var trend: StatTrend?
 
     private static let wordLimit = 40
 
     public init() {}
+
+    /// Opens with one stat's history showing, for the rendered screenshots.
+    public init(showingTrend: StatTrend) {
+        _trend = ViewState(wrappedValue: showingTrend)
+    }
 
     private var term: String {
         get { model.analysisTerm }
@@ -358,8 +365,8 @@ public struct AnalysisDetail: View {
             WordFlow(spacing: 28, rowSpacing: 14) {
                 StatTile(label: "Entries", value: rhythm.entryCount)
                 if let perMonth = rhythm.perMonth, let perWeek = rhythm.perWeek {
-                    StatTile(label: "Average per month", value: perMonth.formatted(.number.precision(.fractionLength(1))))
-                    StatTile(label: "Average per week", value: perWeek.formatted(.number.precision(.fractionLength(1))))
+                    trendTile(.perMonth, StatTile(label: "Average per month", value: perMonth.formatted(.number.precision(.fractionLength(1)))))
+                    trendTile(.perWeek, StatTile(label: "Average per week", value: perWeek.formatted(.number.precision(.fractionLength(1)))))
                 }
                 if let gap = rhythm.longestGap {
                     StatTile(label: "Longest gap", value: count(gap.days, "day"), detail: "\(gap.from)\nto \(gap.to)")
@@ -371,11 +378,20 @@ public struct AnalysisDetail: View {
                     StatTile(label: "Current streak", value: count(rhythm.currentStreak, "day"))
                 }
                 if let average = rhythm.averageTime {
-                    StatTile(label: "Usual time", value: average,
-                             detail: "from \(count(rhythm.timedCount, "entry", "entries")) with a time")
+                    trendTile(.time, StatTile(label: "Usual time", value: average,
+                                              detail: "from \(count(rhythm.timedCount, "entry", "entries")) with a time"))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if let trend, let points = trendPoints(trend, rhythm) {
+                if points.count >= 2 {
+                    trendSection(trend, points: points)
+                } else {
+                    Text("All dated entries fall in one \(trend == .perWeek || (trend == .time && byWeek) ? "week" : "month") so far, so there's no change to show yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if rhythm.datedCount == 0 {
                 Text("None of these entries has a date yet, so they can't be shown over time.")
                     .foregroundStyle(.secondary)
@@ -405,6 +421,61 @@ public struct AnalysisDetail: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// A tile that shows, or hides, how its figure changed over time when clicked.
+    private func trendTile(_ kind: StatTrend, _ tile: StatTile) -> some View {
+        Button {
+            trend = trend == kind ? nil : kind
+        } label: {
+            tile.clickable(selected: trend == kind)
+        }
+        .buttonStyle(.plain)
+        .help(trend == kind ? "Hide how this changed over time" : "Show how this changed over time")
+    }
+
+    private func trendPoints(_ kind: StatTrend, _ rhythm: EntryRhythm) -> [TrendPoint]? {
+        switch kind {
+        case .perMonth: rhythm.perMonthTrend
+        case .perWeek: rhythm.perWeekTrend
+        case .time: byWeek ? rhythm.timeTrendByWeek : rhythm.timeTrendByMonth
+        }
+    }
+
+    private func trendSection(_ kind: StatTrend, points: [TrendPoint]) -> some View {
+        let title: String
+        let note: String
+        switch kind {
+        case .perMonth:
+            title = "Average per month over time"
+            note = "Each point is the average as it stood at the end of that month, counting only entries dated up to then."
+        case .perWeek:
+            title = "Average per week over time"
+            note = "Each point is the average as it stood at the end of that week, counting only entries dated up to then."
+        case .time:
+            title = "Usual time over time"
+            note = "Each point is the usual time as it stood at the end of that \(byWeek ? "week" : "month"), from entries "
+                + "dated up to then that have a time. Gaps are where there's nothing to average yet."
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title).font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Close") { trend = nil }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
+            TrendChart(points: points, isTime: kind == .time)
+                .frame(height: 160)
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line.opacity(0.6)))
+        .padding(.vertical, 4)
     }
 
     /// The span the averages cover, and how many entries were left out for having no date.
@@ -472,11 +543,18 @@ public struct AnalysisDetail: View {
     }
 }
 
+/// The Entries stats that can show how they changed over time.
+public enum StatTrend: Hashable, Sendable {
+    case perMonth, perWeek, time
+}
+
 private struct StatTile: View {
     let label: String
     let value: String
     var detail: String?
     var color: Color?
+    /// Set on tiles that open a chart: nil on plain tiles, true while the chart is showing.
+    var selected: Bool?
 
     init(label: String, value: String, detail: String? = nil) {
         self.label = label
@@ -497,6 +575,11 @@ private struct StatTile: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if selected != nil {
+                    Image(systemName: "chart.xyaxis.line")
+                        .font(.caption2)
+                        .foregroundStyle(selected == true ? Theme.accent : .secondary)
+                }
             }
             Text(value)
                 .font(.system(size: 26, weight: .semibold))
@@ -510,6 +593,171 @@ private struct StatTile: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        // A clickable tile gets a frame the same size as its padding, pulled back out so the row doesn't shift.
+        .padding(.horizontal, selected == nil ? 0 : 8)
+        .padding(.vertical, selected == nil ? 0 : 5)
+        .background {
+            if let selected {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(selected ? Theme.card : Color.clear)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected ? Theme.accent.opacity(0.6) : Theme.line.opacity(0.6)))
+            }
+        }
+        .contentShape(Rectangle())
+        .padding(.horizontal, selected == nil ? 0 : -8)
+        .padding(.vertical, selected == nil ? 0 : -5)
+    }
+
+    func clickable(selected: Bool) -> StatTile {
+        var tile = self
+        tile.selected = selected
+        return tile
+    }
+}
+
+/// A line through a running figure, one point per month or week, with hover details.
+private struct TrendChart: View {
+    let points: [TrendPoint]
+    /// Values are minutes after midnight, labelled as clock times.
+    var isTime = false
+    @ViewState private var hovered: Int?
+
+    private let axisWidth: CGFloat = 44
+    private let axisHeight: CGFloat = 24
+
+    var body: some View {
+        GeometryReader { proxy in
+            let plot = CGRect(x: axisWidth, y: 10,
+                              width: max(proxy.size.width - axisWidth, 1),
+                              height: max(proxy.size.height - axisHeight - 10, 1))
+            let ticks = self.ticks
+            let low = ticks.first ?? 0
+            let high = max(ticks.last ?? 1, low + 1e-9)
+            let y = { (value: Double) -> CGFloat in plot.maxY - plot.height * CGFloat((value - low) / (high - low)) }
+
+            ZStack(alignment: .topLeading) {
+                Canvas { context, _ in
+                    for tick in ticks {
+                        var line = Path()
+                        let at = y(tick).rounded() + 0.5
+                        line.move(to: CGPoint(x: plot.minX, y: at))
+                        line.addLine(to: CGPoint(x: plot.maxX, y: at))
+                        context.stroke(line, with: .color(Theme.line), lineWidth: 1)
+                    }
+                    if let hovered {
+                        let slot = plot.width / CGFloat(points.count)
+                        let band = CGRect(x: plot.minX + slot * CGFloat(hovered), y: plot.minY, width: slot, height: plot.height)
+                        context.fill(Path(band), with: .color(.primary.opacity(0.06)))
+                    }
+                    // Gaps (no value yet) break the line rather than bridging it.
+                    var path = Path()
+                    var drawing = false
+                    for (index, point) in points.enumerated() {
+                        guard let value = point.value else { drawing = false; continue }
+                        let spot = CGPoint(x: center(index, plot), y: y(value))
+                        if drawing { path.addLine(to: spot) } else { path.move(to: spot) }
+                        drawing = true
+                    }
+                    context.stroke(path, with: .color(Theme.chart), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    let dot: CGFloat = points.count <= 40 ? 5 : 0
+                    for (index, point) in points.enumerated() {
+                        guard let value = point.value else { continue }
+                        let size = index == hovered ? 8 : dot
+                        guard size > 0 else { continue }
+                        let spot = CGPoint(x: center(index, plot), y: y(value))
+                        context.fill(Path(ellipseIn: CGRect(x: spot.x - size / 2, y: spot.y - size / 2, width: size, height: size)),
+                                     with: .color(Theme.chart))
+                    }
+                }
+
+                ForEach(ticks, id: \.self) { tick in
+                    Text(tickLabel(tick))
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                        .frame(width: axisWidth - 6, alignment: .trailing)
+                        .position(x: (axisWidth - 6) / 2, y: y(tick))
+                }
+
+                ForEach(labelIndices(width: plot.width), id: \.self) { index in
+                    Text(points[index].shortLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                        .position(x: min(max(center(index, plot), plot.minX + 26), plot.maxX - 26), y: plot.maxY + 13)
+                }
+
+                if let hovered, points.indices.contains(hovered) {
+                    tooltip(points[hovered])
+                        .position(x: min(max(center(hovered, plot), plot.minX + 90), plot.maxX - 90), y: plot.minY + 24)
+                        .allowsHitTesting(false)
+                }
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let point):
+                    guard plot.contains(CGPoint(x: point.x, y: min(point.y, plot.maxY - 1))) else {
+                        hovered = nil
+                        return
+                    }
+                    hovered = min(Int((point.x - plot.minX) / (plot.width / CGFloat(points.count))), points.count - 1)
+                case .ended:
+                    hovered = nil
+                }
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Line chart over time")
+        .accessibilityValue(points.filter { $0.value != nil }.map { "\($0.label): \($0.display)" }.joined(separator: ", "))
+    }
+
+    private func tooltip(_ point: TrendPoint) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(point.label).font(.caption.weight(.semibold)).lineLimit(1)
+            Text(point.value == nil ? "Nothing to go on yet" : point.display)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(Theme.paper, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.line))
+    }
+
+    private func center(_ index: Int, _ plot: CGRect) -> CGFloat {
+        plot.minX + plot.width / CGFloat(points.count) * (CGFloat(index) + 0.5)
+    }
+
+    private func labelIndices(width: CGFloat) -> [Int] {
+        let capacity = max(Int(width / 84), 2)
+        guard points.count > capacity else { return Array(points.indices) }
+        return (0..<capacity).map { $0 * (points.count - 1) / (capacity - 1) }
+    }
+
+    private func tickLabel(_ tick: Double) -> String {
+        guard isTime else { return tick.formatted(.number.precision(.fractionLength(0...1))) }
+        return AnalysisSnapshot.clock(Int(tick)).replacingOccurrences(of: ":00 ", with: " ")
+    }
+
+    /// Gridlines at a clean step: from zero for averages, whole hours around the line for times.
+    private var ticks: [Double] {
+        let values = points.compactMap(\.value)
+        guard let lowest = values.min(), let highest = values.max() else { return [0, 1] }
+        if isTime {
+            let low = lowest - 30, high = highest + 30
+            let step = [60.0, 120, 180, 360].first { $0 >= (high - low) / 4 } ?? 360
+            let start = (low / step).rounded(.down) * step
+            let end = (high / step).rounded(.up) * step
+            return Array(stride(from: start, through: end + step / 2, by: step))
+        }
+        let high = max(highest, 0.1)
+        let rough = high / 4
+        let magnitude = pow(10, (log10(rough)).rounded(.down))
+        let step = [1.0, 2, 5, 10].map { $0 * magnitude }.first { $0 >= rough } ?? 10 * magnitude
+        let end = (high / step).rounded(.up) * step
+        return Array(stride(from: 0, through: end + step / 2, by: step))
     }
 }
 

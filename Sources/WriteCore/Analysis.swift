@@ -136,6 +136,18 @@ public struct TimelineBin: Identifiable, Hashable, Sendable {
     public let pageCount: Int
 }
 
+/// A running figure as it stood at the end of one month or week, counting only entries dated up to then.
+public struct TrendPoint: Identifiable, Hashable, Sendable {
+    public let id: Int
+    public let label: String
+    public let shortLabel: String
+    /// Nil while there's nothing to go on yet. For times, minutes after midnight, kept within 12 hours of the
+    /// overall usual time so a line through midnight doesn't jump from one edge of the chart to the other.
+    public let value: Double?
+    /// The value as the tile shows it: "1.5" or "9:40 PM".
+    public let display: String
+}
+
 /// How often entries were written, from their dates.
 public struct EntryRhythm: Sendable {
     /// The longest stretch between two entries written on different days.
@@ -174,6 +186,12 @@ public struct EntryRhythm: Sendable {
     public var timedCount = 0
     /// The usual time of writing, "9:40 PM", averaged around the clock so 11 PM and 1 AM give midnight.
     public var averageTime: String?
+    /// The average per month and per week as they stood at the end of each month and week.
+    public var perMonthTrend: [TrendPoint] = []
+    public var perWeekTrend: [TrendPoint] = []
+    /// The usual time as it stood at the end of each month and week, from dated entries with a time.
+    public var timeTrendByMonth: [TrendPoint] = []
+    public var timeTrendByWeek: [TrendPoint] = []
 }
 
 public struct TermResult: Sendable {
@@ -470,6 +488,41 @@ public struct AnalysisSnapshot: Sendable {
         }
         rhythm.currentStreak = current
         (rhythm.byTimeOfDay, rhythm.timedCount, rhythm.averageTime) = timeOfDay(pages: pages)
+
+        func running(_ bins: [TimelineBin]) -> [TrendPoint] {
+            var total = 0
+            return bins.enumerated().map { index, bin in
+                total += bin.count
+                let value = Double(total) / Double(index + 1)
+                return TrendPoint(id: index, label: bin.label, shortLabel: bin.shortLabel, value: value,
+                                  display: value.formatted(.number.precision(.fractionLength(1))))
+            }
+        }
+        rhythm.perMonthTrend = running(byMonth)
+        rhythm.perWeekTrend = running(byWeek)
+
+        let minutes = entryMinutes()
+        let timed = dated.compactMap { item in minutes[item.entry].map { (day: item.day, minute: $0) } }
+        if let overall = Self.usualMinute(timed.map(\.minute)) {
+            func runningTime(_ bins: [TimelineBin], index: (Int) -> Int) -> [TrendPoint] {
+                var sorted = [[Int]](repeating: [], count: bins.count)
+                for item in timed { sorted[index(item.day)].append(item.minute) }
+                var sofar: [Int] = []
+                return bins.enumerated().map { bin, info in
+                    sofar += sorted[bin]
+                    guard let minute = Self.usualMinute(sofar) else {
+                        return TrendPoint(id: bin, label: info.label, shortLabel: info.shortLabel, value: nil, display: "")
+                    }
+                    var unwrapped = minute
+                    while unwrapped < overall - 720 { unwrapped += 1440 }
+                    while unwrapped >= overall + 720 { unwrapped -= 1440 }
+                    return TrendPoint(id: bin, label: info.label, shortLabel: info.shortLabel, value: Double(unwrapped),
+                                      display: Self.clock(minute))
+                }
+            }
+            rhythm.timeTrendByMonth = runningTime(byMonth, index: month)
+            rhythm.timeTrendByWeek = runningTime(byWeek) { week($0) - firstWeek }
+        }
         return rhythm
     }
 
@@ -592,43 +645,55 @@ public struct AnalysisSnapshot: Sendable {
     }
 
     /// Entries by the time in their headings, in three-hour blocks, and their average time.
-    func timeOfDay(pages: [String: Set<UUID>]) -> ([TimelineBin], Int, String?) {
+    /// Minutes after midnight for each entry with a time in its heading.
+    private func entryMinutes() -> [String: Int] {
         var minutes: [String: Int] = [:]
         for unit in units where minutes[unit.entryID] == nil {
             let parts = unit.time?.split(separator: ":").compactMap { Int($0) } ?? []
             if parts.count == 2 { minutes[unit.entryID] = parts[0] * 60 + parts[1] }
         }
+        return minutes
+    }
+
+    func timeOfDay(pages: [String: Set<UUID>]) -> ([TimelineBin], Int, String?) {
+        let minutes = entryMinutes()
         guard !minutes.isEmpty else { return ([], 0, nil) }
         var counts = [Int](repeating: 0, count: 8)
         var binPages = [Set<UUID>](repeating: [], count: 8)
-        var x = 0.0, y = 0.0
         for (entry, minute) in minutes {
             counts[minute / 180] += 1
             binPages[minute / 180].formUnion(pages[entry] ?? [])
+        }
+        let short = ["12a", "3a", "6a", "9a", "12p", "3p", "6p", "9p"]
+        let bins = (0..<8).map { index in
+            TimelineBin(id: index, label: "\(Self.clock(index * 180)) to \(Self.clock(index * 180 + 179))", shortLabel: short[index],
+                        count: counts[index], pageCount: binPages[index].count)
+        }
+        return (bins, minutes.count, Self.usualMinute(Array(minutes.values)).map(Self.clock))
+    }
+
+    /// The usual time, averaged around the clock so 11 PM and 1 AM give midnight, to the nearest five minutes.
+    /// Nil when there are no times, or they're spread so evenly around the clock that no average means much.
+    static func usualMinute(_ minutes: [Int]) -> Int? {
+        guard !minutes.isEmpty else { return nil }
+        var x = 0.0, y = 0.0
+        for minute in minutes {
             let angle = Double(minute) / 1440 * 2 * .pi
             x += cos(angle)
             y += sin(angle)
         }
-        func clock(_ minute: Int) -> String {
-            let hour = minute / 60 % 24
-            let shown = hour % 12 == 0 ? 12 : hour % 12
-            return String(format: "%d:%02d %@", shown, minute % 60, hour < 12 ? "AM" : "PM")
-        }
-        let short = ["12a", "3a", "6a", "9a", "12p", "3p", "6p", "9p"]
-        let bins = (0..<8).map { index in
-            TimelineBin(id: index, label: "\(clock(index * 180)) to \(clock(index * 180 + 179))", shortLabel: short[index],
-                        count: counts[index], pageCount: binPages[index].count)
-        }
-        // Times spread evenly around the clock have no meaningful average.
-        let spread = (x * x + y * y).squareRoot() / Double(minutes.count)
-        var average: String?
-        if spread > 0.3 {
-            var angle = atan2(y, x)
-            if angle < 0 { angle += 2 * .pi }
-            let minute = Int((angle / (2 * .pi) * 1440).rounded()) % 1440
-            average = clock(minute / 5 * 5)
-        }
-        return (bins, minutes.count, average)
+        guard (x * x + y * y).squareRoot() / Double(minutes.count) > 0.3 else { return nil }
+        var angle = atan2(y, x)
+        if angle < 0 { angle += 2 * .pi }
+        return Int((angle / (2 * .pi) * 1440).rounded()) % 1440 / 5 * 5
+    }
+
+    /// "9:40 PM" for minutes after midnight; any whole number of days either way is ignored.
+    public static func clock(_ minute: Int) -> String {
+        let wrapped = (minute % 1440 + 1440) % 1440
+        let hour = wrapped / 60
+        let shown = hour % 12 == 0 ? 12 : hour % 12
+        return String(format: "%d:%02d %@", shown, wrapped % 60, hour < 12 ? "AM" : "PM")
     }
 
     /// Today, counted like entry dates.

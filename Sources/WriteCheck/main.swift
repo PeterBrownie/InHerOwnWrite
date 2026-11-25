@@ -445,6 +445,15 @@ func runEntryChecks() {
           && months.byWeek.first?.label == "Week of Jan 5, 2026")
     check("averages over the whole span", abs((months.perMonth ?? 0) - 5.0 / 3) < 1e-9 && abs((months.perWeek ?? 0) - 5.0 / 9) < 1e-9)
     check("finds the longest gap", months.longestGap == EntryRhythm.Gap(days: 41, from: "Jan 20, 2026", to: "Mar 2, 2026"))
+    check("tracks the average per month as it stood each month",
+          months.perMonthTrend.map(\.display) == ["3.0", "1.5", "1.7"] && months.perWeekTrend.count == 9
+          && abs((months.perWeekTrend.last?.value ?? 0) - 5.0 / 9) < 1e-9)
+    let lateText = "January 10, 2026 11:00 pm\nfirst\n\nFebruary 3, 2026 1:00 am\nsecond\n\nMarch 2, 2026 1:00 am\nthird"
+    let late = AnalysisSnapshot(entries: EntryBuilder.build(pages: timed, journalOrder: [journal]) { _ in lateText },
+                                includedPages: [timed[0].id], names: [], journalNames: [:]).entryRhythm()
+    check("tracks the usual time across midnight without jumping",
+          late.timeTrendByMonth.map(\.display) == ["11:00 PM", "12:00 AM", "12:20 AM"]
+          && late.timeTrendByMonth.map(\.value) == [-60, 0, 20] && late.averageTime == "12:20 AM")
     let undated = AnalysisSnapshot(entries: entries, includedPages: [pages[2].id], names: [], journalNames: [:]).entryRhythm()
     check("undated entries have no averages", undated.entryCount == 1 && undated.perMonth == nil && undated.longestGap == nil)
 }
@@ -675,6 +684,10 @@ func runRender(output: URL, sample: URL?) async throws {
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("3d-entries.png"))
     model.showingAnalysis = true
     await render(RootView().environmentObject(model).environmentObject(updater), size: size, to: output.appendingPathComponent("8-analysis.png"))
+    await render(AnalysisDetail(showingTrend: .perMonth).environmentObject(model), size: CGSize(width: 900, height: 900),
+                 to: output.appendingPathComponent("8b-analysis-trend.png"))
+    await render(AnalysisDetail(showingTrend: .time).environmentObject(model), size: CGSize(width: 900, height: 900),
+                 to: output.appendingPathComponent("8c-analysis-time-trend-dark.png"), dark: true)
     model.analysisTerm = "Theo"
     await render(AnalysisDetail().environmentObject(model), size: CGSize(width: 900, height: 1100),
                  to: output.appendingPathComponent("9-analysis-term.png"))

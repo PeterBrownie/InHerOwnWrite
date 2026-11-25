@@ -6,6 +6,17 @@ Own Write → About In Her Own Write**, and in the title of the matching GitHub 
 
 Builds pushed before this file was started (GitHub's builds 1 to 7) aren't listed.
 
+## Build 36 (November 24, 2026)
+
+- **See how your averages changed.** In Analysis, click **Average per month**, **Average per week**, or
+  **Usual time** to see a line of where that figure stood at the end of each month or week, counting only
+  entries dated up to then. Click it again, or **Close**, to hide it. Usual time follows the Per Month / Per
+  Week switch.
+- **Pages read by Claude go three at a time** instead of one after another, so a stack of photos finishes
+  sooner.
+- In Analysis, a stat like **10:00 PM** no longer breaks onto two lines; when the tiles run out of room, they
+  move to a second row instead.
+
 ## Build 33 (November 24, 2026)
 
 - **Liquid Glass on Macs that build the app themselves.** Copies built from the code recorded the wrong
