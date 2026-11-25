@@ -51,7 +51,8 @@ Keep real photos and anything derived from them outside the repository, and dele
 - `Sources/WriteApp`: SwiftUI app. `AppModel` holds state; `LocalReading.swift` and `LocalReaderViews.swift`
   are the reading-on-this-Mac queue and live window; `UploadSheet` has the crop editor (with the fold line
   for both pages) and the queue of photos dropped together; `JournalTextEditor` draws and handles the
-  confidence marks; `Updater` and `UpdateBanner` handle updates.
+  confidence marks; `DeviceUnlock` is Touch ID and Apple Watch unlock (a Secure Enclave key, not the
+  Keychain); `Updater` and `UpdateBanner` handle updates.
 - `Sources/WriteCheck`: the checks above, with `LocalChecks.swift` for the newer parts.
 
 ## Reading on this Mac, in brief
@@ -71,3 +72,9 @@ their build commit is behind, they get the new version in the background and sho
 update.** with Update & Restart and Ignore. An app built here from the code builds the update from its clone;
 any other copy downloads the latest release. Keep `main` building and `swift run WriteCheck` passing before
 every push.
+
+**Every push to `main` adds an entry to `CHANGELOG.md`**, newest at the top, headed
+`## Build N (Month D, YYYY)`. N is the build number: the number of commits on `main` once the push lands,
+that is, `git rev-list --count HEAD` after the last commit. Put the changelog edit in that last commit, so
+N is the count before committing it plus one. List what someone using the app would notice, in plain words,
+one bullet per change, covering every commit since the previous entry.

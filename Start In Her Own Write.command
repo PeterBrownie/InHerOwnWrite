@@ -47,8 +47,11 @@ PLIST
 # Lets the app update itself: the commit it was built from, where this copy of the code lives (so this Mac
 # can build updates), and the GitHub repository (so a copy sent to another Mac can download them).
 # --release is for GitHub's build, whose copy of the code is thrown away afterward.
+# The build number is the number of commits, which only grows because main is never rewritten; CHANGELOG.md
+# lists each build by it.
 if commit="$(git rev-parse HEAD 2>/dev/null)"; then
   plutil -insert InHerOwnWriteCommit -string "$commit" "$staged/Contents/Info.plist"
+  plutil -replace CFBundleVersion -string "$(git rev-list --count HEAD)" "$staged/Contents/Info.plist"
   [[ "$1" == "--release" ]] || plutil -insert InHerOwnWriteSource -string "$PWD" "$staged/Contents/Info.plist"
 fi
 repository="${GITHUB_REPOSITORY:-$(git remote get-url origin 2>/dev/null)}"

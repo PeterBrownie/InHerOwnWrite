@@ -19,6 +19,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The whole history, so the build number (the number of commits) can be counted.
+          fetch-depth: 0
 
       - name: Show the Swift version
         run: swift --version
@@ -40,7 +43,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="build-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          build="$(git rev-list --count HEAD)"
           gh release create "$tag" In-Her-Own-Write.zip \
             --target "$GITHUB_SHA" --latest \
-            --title "In Her Own Write, build ${GITHUB_RUN_NUMBER}" \
-            --notes "Built from ${GITHUB_SHA}. Download In-Her-Own-Write.zip, unzip it, and move the app into Applications. The first time, open System Settings → Privacy & Security and click Open Anyway. After that it updates itself."
+            --title "In Her Own Write, build ${build}" \
+            --notes "Built from ${GITHUB_SHA}. What changed is in CHANGELOG.md. Download In-Her-Own-Write.zip, unzip it, and move the app into Applications. The first time, open System Settings → Privacy & Security and click Open Anyway. After that it updates itself."
